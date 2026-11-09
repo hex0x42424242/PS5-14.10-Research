@@ -1,0 +1,29 @@
+[2026-11-09 20:49:55.291] BEACON 192.168.50.186: LEAD-VERIFY-START ua=Mozilla/5.0 (PlayStation; PlayStation 5/14.10) AppleWebKit/6
+[2026-11-09 20:49:55.309] BEACON 192.168.50.186: A1 contents=1|18446744073709551615|0
+[2026-11-09 20:49:55.318] BEACON 192.168.50.186: A2 includes(-1n)=true want=false
+[2026-11-09 20:49:55.326] BEACON 192.168.50.186: A2 indexOf(-1n)=1 want=-1
+[2026-11-09 20:49:55.335] BEACON 192.168.50.186: A2 lastIndexOf(-1n)=1 want=-1
+[2026-11-09 20:49:55.344] BEACON 192.168.50.186: A2 indexOf(2**64)=2 want=-1
+[2026-11-09 20:49:55.360] BEACON 192.168.50.186: A3 contents=-1|5|-9223372036854775808|9223372036854775807
+[2026-11-09 20:49:55.368] BEACON 192.168.50.186: A3 indexOf(-2**63)=2 want=2
+[2026-11-09 20:49:55.377] BEACON 192.168.50.186: C3 keys(spread plain)=a,b,c want=a,b,c
+[2026-11-09 20:49:55.386] BEACON 192.168.50.186: C6 rest keys=a,b,c,length,name ownKeys=a,b,c,length,name
+[2026-11-09 20:49:55.394] BEACON 192.168.50.186: B2 splice(0,3,7,8) join=1,2,3 want=7,8,proto2,5,6
+[2026-11-09 20:49:55.402] BEACON 192.168.50.186: B6 cleanup done
+[2026-11-09 20:49:55.412] BEACON 192.168.50.186: A3 indexOf(5+2**64)=1 want=-1
+[2026-11-09 20:49:55.422] BEACON 192.168.50.186: C2 prototype descriptor: w=true e=false c=false want=w=true e=false c=false
+[2026-11-09 20:49:55.433] BEACON 192.168.50.186: B1 splice(0,2,9) join=1,2 want=9,proto2,4
+[2026-11-09 20:49:55.444] BEACON 192.168.50.186: B4 splice(0,1) join=1 want=2,proto2,4,5
+[2026-11-09 20:49:55.452] BEACON 192.168.50.186: A3 includes(2**64-1)=true want=false
+[2026-11-09 20:49:55.460] BEACON 192.168.50.186: C3 spread has own prototype? undefined want=undefined
+[2026-11-09 20:49:55.468] BEACON 192.168.50.186: B1 keys=0,1 len=2
+[2026-11-09 20:49:55.504] BEACON 192.168.50.186: A2 indexOf(max)=1 want=1
+[2026-11-09 20:49:55.512] BEACON 192.168.50.186: C4 keys(name enum)=a,b,c,name want=name,a,b,c
+[2026-11-09 20:49:55.520] BEACON 192.168.50.186: B5 splice proto4 join=1,2 want=9,3,4,proto4,6,7
+[2026-11-09 20:49:55.528] BEACON 192.168.50.186: C1 ownKeys=length,name,prototype,a,b,c want=prototype,length,name,a,b,c
+[2026-11-09 20:49:55.536] BEACON 192.168.50.186: LEAD-VERIFY-DONE
+[2026-11-09 20:49:55.546] BEACON 192.168.50.186: B1 hasOwnProperty(1)=true want=true
+[2026-11-09 20:49:55.553] BEACON 192.168.50.186: C5 keys(name+len enum)=a,b,c,length,name want=length,name,a,b,c
+[2026-11-09 20:49:55.562] BEACON 192.168.50.186: B3 double splice join=1.5,2.5 want=9.5,proto2,4.5
+[2026-11-09 20:49:55.570] BEACON 192.168.50.186: A4 store(-1n) reads 18446744073709551615 want=18446744073709551615 (spec wrap)
+[2026-11-09 20:49:55.580] BEACON 192.168.50.186: A3 indexOf(2**63)=2 want=-1

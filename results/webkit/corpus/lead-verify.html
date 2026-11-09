@@ -1,0 +1,72 @@
+<!doctype html><meta charset="utf-8"><title>lead-verify</title>
+<style>html,body{background:#060606;color:#fff;font-family:monospace;font-size:13px}</style>
+<div id="console"></div>
+<script>
+function b(m){ try { new Image().src = "/beacon?m=" + encodeURIComponent(String(m).slice(0,300)); } catch(e){} }
+var out = document.getElementById("console");
+function log(m){ var d=document.createElement("div"); d.textContent=m; out.appendChild(d); b(m); }
+
+log("LEAD-VERIFY-START ua=" + navigator.userAgent.slice(0,60));
+
+/* ============ LEAD A: BigUint64Array/BigInt64 search comparator ============ */
+try {
+  var u = new BigUint64Array([1n, 2n ** 64n - 1n, 0n]);
+  log("A1 contents=" + Array.from(u).join("|"));
+  log("A2 includes(-1n)=" + u.includes(-1n) + " want=false");
+  log("A2 indexOf(-1n)=" + u.indexOf(-1n) + " want=-1");
+  log("A2 lastIndexOf(-1n)=" + u.lastIndexOf(-1n) + " want=-1");
+  log("A2 indexOf(2**64)=" + u.indexOf(2n ** 64n) + " want=-1");
+  log("A2 indexOf(max)=" + u.indexOf(2n ** 64n - 1n) + " want=1");
+  var s = new BigInt64Array([-1n, 5n, -(2n ** 63n), 2n ** 63n - 1n]);
+  log("A3 contents=" + Array.from(s).join("|"));
+  log("A3 includes(2**64-1)=" + s.includes(2n ** 64n - 1n) + " want=false");
+  log("A3 indexOf(5+2**64)=" + s.indexOf(5n + 2n ** 64n) + " want=-1");
+  log("A3 indexOf(2**63)=" + s.indexOf(2n ** 63n) + " want=-1");
+  log("A3 indexOf(-2**63)=" + s.indexOf(-(2n ** 63n)) + " want=2");
+  var t = new BigUint64Array(1);
+  t[0] = -1n;
+  log("A4 store(-1n) reads " + t[0] + " want=" + (2n ** 64n - 1n) + " (spec wrap)");
+} catch (e) { log("A-ERR " + e); }
+
+/* ============ LEAD C: object spread on functions (prototype leak + order) ============ */
+try {
+  var fn = function named(x, y) {};
+  fn.a = 1; fn.b = 2; fn.c = 3;
+  log("C1 ownKeys=" + Reflect.ownKeys(fn).join(",") + " want=prototype,length,name,a,b,c");
+  var d0 = Object.getOwnPropertyDescriptor(fn, "prototype");
+  log("C2 prototype descriptor: w=" + d0.writable + " e=" + d0.enumerable + " c=" + d0.configurable + " want=w=true e=false c=false");
+  var s0 = { ...fn };
+  log("C3 keys(spread plain)=" + Object.keys(s0).join(",") + " want=a,b,c");
+  log("C3 spread has own prototype? " + Object.getOwnPropertyDescriptor(s0, "prototype") + " want=undefined");
+  Object.defineProperty(fn, "name", { enumerable: true });
+  log("C4 keys(name enum)=" + Object.keys({ ...fn }).join(",") + " want=name,a,b,c");
+  Object.defineProperty(fn, "length", { enumerable: true });
+  log("C5 keys(name+len enum)=" + Object.keys({ ...fn }).join(",") + " want=length,name,a,b,c");
+  var rest = null;
+  eval("rest = { ...fn }");
+  log("C6 rest keys=" + Object.keys(rest).join(",") + " ownKeys=" + Reflect.ownKeys(rest).join(","));
+} catch (e) { log("C-ERR " + e); }
+
+/* ============ LEAD B: splice hole-forwarding (runs last: pollutes proto) ============ */
+try {
+  Array.prototype[2] = "proto2";
+  Array.prototype[4] = "proto4";
+  var r1 = [1, 2, , 4].splice(0, 2, 9);
+  log("B1 splice(0,2,9) join=" + r1.join(",") + " want=9,proto2,4");
+  log("B1 hasOwnProperty(1)=" + r1.hasOwnProperty(1) + " want=true");
+  log("B1 keys=" + Object.keys(r1).join(",") + " len=" + r1.length);
+  var r2 = [1, 2, 3, , 5, 6].splice(0, 3, 7, 8);
+  log("B2 splice(0,3,7,8) join=" + r2.join(",") + " want=7,8,proto2,5,6");
+  var r3 = [1.5, 2.5, , 4.5].splice(0, 2, 9.5);
+  log("B3 double splice join=" + r3.join(",") + " want=9.5,proto2,4.5");
+  var r4 = [1, 2, , 4, 5].splice(0, 1);
+  log("B4 splice(0,1) join=" + r4.join(",") + " want=2,proto2,4,5");
+  var r5 = [1, 2, 3, 4, , 6, 7].splice(0, 2, 9);
+  log("B5 splice proto4 join=" + r5.join(",") + " want=9,3,4,proto4,6,7");
+  delete Array.prototype[2];
+  delete Array.prototype[4];
+  log("B6 cleanup done");
+} catch (e) { log("B-ERR " + e); }
+
+log("LEAD-VERIFY-DONE");
+</script>

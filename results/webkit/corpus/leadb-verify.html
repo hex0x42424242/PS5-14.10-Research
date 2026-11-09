@@ -1,0 +1,63 @@
+<!doctype html><meta charset="utf-8"><title>leadB-verify</title>
+<style>html,body{background:#060606;color:#fff;font-family:monospace;font-size:13px}</style>
+<div id="console"></div>
+<script>
+function b(m){ try { new Image().src = "/beacon?m=" + encodeURIComponent(String(m).slice(0,300)); } catch(e){} }
+var out = document.getElementById("console");
+function log(m){ var d=document.createElement("div"); d.textContent=m; out.appendChild(d); b(m); }
+
+log("LEADB-START");
+
+try {
+  Array.prototype[2] = "proto2";
+  Array.prototype[4] = "proto4";
+
+  // B1: delete range com hole logo apos: [1,2,,4].splice(0,2,9)
+  var a1 = [1, 2, , 4]; a1.splice(0, 2, 9);
+  log("B1 v.join=" + a1.join(",") + " want=9,proto2,4");
+  log("B1 len=" + a1.length + " want=3");
+  log("B1 keys=" + Object.keys(a1).join(",") + " want=0,1,2");
+  log("B1 own(1)=" + a1.hasOwnProperty(1) + " want=true");
+  log("B1 [1]=" + a1[1] + " want=proto2");
+
+  // B2: delete range maior: [1,2,3,,5,6].splice(0,3,7,8)
+  var a2 = [1, 2, 3, , 5, 6]; a2.splice(0, 3, 7, 8);
+  log("B2 v.join=" + a2.join(",") + " want=7,8,proto2,5,6");
+  log("B2 len=" + a2.length + " want=5 | own(2)=" + a2.hasOwnProperty(2) + " want=true");
+  log("B2 [2]=" + a2[2] + " want=proto2");
+
+  // B3: array de doubles com hole
+  var a3 = [1.5, 2.5, , 4.5]; a3.splice(0, 2, 9.5);
+  log("B3 v.join=" + a3.join(",") + " want=9.5,proto2,4.5");
+  log("B3 [1]=" + a3[1] + " want=proto2 | own(1)=" + a3.hasOwnProperty(1) + " want=true");
+
+  // B4: delete 1 item
+  var a4 = [1, 2, , 4, 5]; a4.splice(0, 1);
+  log("B4 v.join=" + a4.join(",") + " want=2,proto2,4,5");
+  log("B4 [1]=" + a4[1] + " want=proto2");
+
+  // B5: hole no tail: [1,2,3,4,,6,7].splice(0,2,9)
+  var a5 = [1, 2, 3, 4, , 6, 7]; a5.splice(0, 2, 9);
+  log("B5 v.join=" + a5.join(",") + " want=9,3,4,proto4,6,7");
+  log("B5 [3]=" + a5[3] + " want=proto4 | own(3)=" + a5.hasOwnProperty(3) + " want=true");
+
+  // B6: controle SEM hole no shift: [1,2,3,4].splice(0,3,7,8)
+  var a6 = [1, 2, 3, 4]; a6.splice(0, 3, 7, 8);
+  log("B6 ctrl join=" + a6.join(",") + " want=7,8,4");
+
+  // B7: splice SEM prototype setado (ambiente limpo): hole vira hole
+  delete Array.prototype[2];
+  delete Array.prototype[4];
+  var a7 = [1, 2, , 4]; a7.splice(0, 2, 9);
+  log("B7 noprot v.join=" + a7.join(",") + " want=9,,4");
+  log("B7 noprot own(1)=" + a7.hasOwnProperty(1) + " want=false");
+  log("B7 noprot [1]=" + a7[1] + " want=undefined");
+  log("B7 noprot keys=" + Object.keys(a7).join(",") + " want=0,2");
+
+  // B8: retorno do splice (deve ser os deletados) — controle da sessao passada
+  var a8 = [1, 2, , 4]; var ret8 = a8.splice(0, 2, 9);
+  log("B8 ret.join=" + ret8.join(",") + " want=1,2 | mutated=" + a8.join(","));
+} catch (e) { log("B-ERR " + e); }
+
+log("LEADB-DONE");
+</script>
