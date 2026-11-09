@@ -779,9 +779,16 @@ def jsc_build() -> int:
         head = ('<!doctype html><meta charset="utf-8"><title>%s</title>\n%s\n%s'
                 '<pre id="err"></pre><script>try{\n' % (subject, JSC_BOOT, JSC_SHIM))
         tail = ('\n}catch(e){var d=document.getElementById(\'err\');'
-                ' if(d) d.textContent=\'THROW: \'+e;}\n</script>'
+                ' if(d) d.textContent=\'THROW: \'+e;'
+                ' if(window.__v172) __v172.mark(\'THREW-\' + __v172.i + \'-\' +'
+                ' String(e).slice(0,90).replace(/[^A-Za-z0-9.:=<>%+_-]/g," "));}\n</script>'
                 '<p>ok <script>document.write(__ok)</script> fail '
                 '<script>document.write(__fail)</script></p>'
+                '<script>if(window.__v172) __v172.mark(\'SUM-\' + __v172.i + \'-ok\''
+                ' + (typeof __ok!=="undefined"?__ok:-1) + \'-fail\''
+                ' + (typeof __fail!=="undefined"?__fail:-1) +'
+                ' ((typeof __failNames!=="undefined"&&__failNames.length)?\'-\''
+                ' + String(__failNames[0]).slice(0,110).replace(/[^A-Za-z0-9.:=<>%+_-]/g," "):\'\'));</script>'
                 + (JSC_HANDOFF % {"file": name}))
         with open(os.path.join(CORPUS, name), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(head + _jsc_body(source) + tail)

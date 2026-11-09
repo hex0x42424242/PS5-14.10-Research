@@ -35,7 +35,9 @@ ROOT = pathlib.Path(__file__).resolve().parent
 PROJECT = ROOT.parent.parent
 
 STATIC = {
-    '/': PROJECT / 'probes' / 'phase13_webkit' / 'p671-private-fields-seal-freeze.html',
+    '/': ROOT / 'p172-runner-standalone.html',
+    '/probe/p172-jsc-corpus-runner.js': ROOT / 'p172-runner-standalone.html',
+    '/p172-body.js': PROJECT / 'probes' / 'phase13_webkit' / 'p172-jsc-corpus-runner.js',
     '/p660': PROJECT / 'probes' / 'phase13_webkit' / 'p660-webkit-fingerprint-2026.html',
     '/p659': PROJECT / 'probes' / 'phase13_webkit' / 'p659-yarr-backreference-oob-leak.html',
     '/p658': PROJECT / 'probes' / 'phase13_webkit' / 'p658-statestack-realloc-alias.html',
@@ -406,6 +408,22 @@ class ProbeHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header('Cache-Control', 'no-store')
                     self.end_headers()
                     self.wfile.write(data)
+                return
+
+        if path.startswith('/corpus/'):
+            corpus_path = _safe_file(
+                PROJECT / 'results' / 'webkit' / 'corpus', path[len('/corpus/'):]
+            )
+            if corpus_path:
+                data = corpus_path.read_bytes()
+                ext = corpus_path.suffix
+                mime = MIME.get(ext, 'application/octet-stream')
+                self.send_response(200)
+                self.send_header('Content-Type', mime + '; charset=utf-8')
+                self.send_header('Content-Length', str(len(data)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(data)
                 return
 
         probe_file = _safe_file(
