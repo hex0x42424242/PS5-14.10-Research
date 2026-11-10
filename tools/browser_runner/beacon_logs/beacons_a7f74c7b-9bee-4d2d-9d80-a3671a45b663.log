@@ -1,0 +1,95 @@
+[2026-11-09 22:02:57.912] BEACON 192.168.50.186: P655-START v2-nav
+[2026-11-09 22:03:00.557] BEACON 192.168.50.186: P655-START v2-nav
+[2026-11-09 22:03:02.970] BEACON 192.168.50.186: P655-START v2-nav
+[2026-11-09 22:03:04.004] BEACON 192.168.50.186: P655-START v2-nav
+[2026-11-09 22:03:05.402] BEACON 192.168.50.186: P655-START v2-nav
+[2026-11-09 22:03:06.128] BEACON 192.168.50.186: P655-START v2-nav
+[2026-11-09 22:03:08.645] BEACON 192.168.50.186: P655-START v2-nav
+[2026-11-09 22:03:09.340] BEACON 192.168.50.186: P655-START v2-nav
+[2026-11-09 22:03:09.392] BEACON 192.168.50.186: P655-IFRAME trigger-sent fonts.size=1|IFRAME-CREATED bufs=80
+[2026-11-09 22:03:09.542] BEACON 192.168.50.186: P655-CHECK bufs=80|P1 hit=52 rc=3 mark=0xdead0655
+[2026-11-09 22:03:09.596] BEACON 192.168.50.186: P655-TW T=00000010008b5460 W=00000010007e1f20
+[2026-11-09 22:03:09.641] BEACON 192.168.50.186: P655-WR captured=true|PREP +0x58 nulled
+[2026-11-09 22:03:09.686] BEACON 192.168.50.186: P655-CLEANUP fonts.clear() ok|NAV location.replace(about:blank) sent
+[2026-11-09 22:03:10.229] BEACON 192.168.50.186: P655-PRE-REMOVE alive=true rc=3|REMOVED iframe gone
+[2026-11-09 22:03:10.329] BEACON 192.168.50.186: P655-GC n=1 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:10.523] BEACON 192.168.50.186: P655-GC n=2 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:10.713] BEACON 192.168.50.186: P655-GC n=3 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:10.911] BEACON 192.168.50.186: P655-GC n=4 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:11.106] BEACON 192.168.50.186: P655-GC n=5 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:11.298] BEACON 192.168.50.186: P655-GC n=6 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:11.494] BEACON 192.168.50.186: P655-GC n=7 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:11.688] BEACON 192.168.50.186: P655-GC n=8 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:11.888] BEACON 192.168.50.186: P655-GC n=9 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:12.086] BEACON 192.168.50.186: P655-GC n=10 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:12.287] BEACON 192.168.50.186: P655-GC n=11 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:12.491] BEACON 192.168.50.186: P655-GC n=12 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:12.683] BEACON 192.168.50.186: P655-GC n=13 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:12.886] BEACON 192.168.50.186: P655-GC n=14 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:13.079] BEACON 192.168.50.186: P655-GC n=15 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:13.279] BEACON 192.168.50.186: P655-GC n=16 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:13.474] BEACON 192.168.50.186: P655-GC n=17 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:13.670] BEACON 192.168.50.186: P655-GC n=18 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:13.866] BEACON 192.168.50.186: P655-GC n=19 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:14.058] BEACON 192.168.50.186: P655-GC n=20 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:14.251] BEACON 192.168.50.186: P655-GC n=21 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:14.443] BEACON 192.168.50.186: P655-GC n=22 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:14.637] BEACON 192.168.50.186: P655-GC n=23 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:14.833] BEACON 192.168.50.186: P655-GC n=24 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:15.027] BEACON 192.168.50.186: P655-GC n=25 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:15.217] BEACON 192.168.50.186: P655-GC n=26 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:15.410] BEACON 192.168.50.186: P655-GC n=27 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:15.608] BEACON 192.168.50.186: P655-GC n=28 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:16.819] BEACON 192.168.50.186: P655-GC n=29 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:17.027] BEACON 192.168.50.186: P655-GC n=30 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:17.246] BEACON 192.168.50.186: P655-GC n=31 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:17.448] BEACON 192.168.50.186: P655-GC n=32 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:17.670] BEACON 192.168.50.186: P655-GC n=33 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:17.896] BEACON 192.168.50.186: P655-GC n=34 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:18.118] BEACON 192.168.50.186: P655-GC n=35 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:18.319] BEACON 192.168.50.186: P655-GC n=36 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:18.521] BEACON 192.168.50.186: P655-GC n=37 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:18.717] BEACON 192.168.50.186: P655-GC n=38 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:18.917] BEACON 192.168.50.186: P655-GC n=39 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:19.116] BEACON 192.168.50.186: P655-GC n=40 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:19.310] BEACON 192.168.50.186: P655-GC n=41 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:19.506] BEACON 192.168.50.186: P655-GC n=42 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:19.703] BEACON 192.168.50.186: P655-GC n=43 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:19.904] BEACON 192.168.50.186: P655-GC n=44 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:20.094] BEACON 192.168.50.186: P655-GC n=45 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:20.285] BEACON 192.168.50.186: P655-GC n=46 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:20.479] BEACON 192.168.50.186: P655-GC n=47 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:20.675] BEACON 192.168.50.186: P655-GC n=48 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:20.869] BEACON 192.168.50.186: P655-GC n=49 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:21.063] BEACON 192.168.50.186: P655-GC n=50 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:21.258] BEACON 192.168.50.186: P655-GC n=51 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:21.452] BEACON 192.168.50.186: P655-GC n=52 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:21.646] BEACON 192.168.50.186: P655-GC n=53 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:21.842] BEACON 192.168.50.186: P655-GC n=54 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:22.043] BEACON 192.168.50.186: P655-GC n=55 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:22.253] BEACON 192.168.50.186: P655-GC n=56 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:22.471] BEACON 192.168.50.186: P655-GC n=57 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:22.693] BEACON 192.168.50.186: P655-GC n=58 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:22.917] BEACON 192.168.50.186: P655-GC n=59 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:23.134] BEACON 192.168.50.186: P655-GC n=60 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:23.334] BEACON 192.168.50.186: P655-GC n=61 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:23.540] BEACON 192.168.50.186: P655-GC n=62 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:23.734] BEACON 192.168.50.186: P655-GC n=63 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:23.926] BEACON 192.168.50.186: P655-GC n=64 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:24.122] BEACON 192.168.50.186: P655-GC n=65 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:24.315] BEACON 192.168.50.186: P655-GC n=66 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:24.509] BEACON 192.168.50.186: P655-GC n=67 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:24.701] BEACON 192.168.50.186: P655-GC n=68 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:24.897] BEACON 192.168.50.186: P655-GC n=69 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:25.093] BEACON 192.168.50.186: P655-GC n=70 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:25.290] BEACON 192.168.50.186: P655-GC n=71 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:25.482] BEACON 192.168.50.186: P655-GC n=72 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:25.674] BEACON 192.168.50.186: P655-GC n=73 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:25.866] BEACON 192.168.50.186: P655-GC n=74 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:26.062] BEACON 192.168.50.186: P655-GC n=75 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:26.256] BEACON 192.168.50.186: P655-GC n=76 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:26.449] BEACON 192.168.50.186: P655-GC n=77 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:26.642] BEACON 192.168.50.186: P655-GC n=78 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:26.837] BEACON 192.168.50.186: P655-GC n=79 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:27.053] BEACON 192.168.50.186: P655-GC n=80 rc=3 alive=false|COLLECTED WeakRef dead but rc unchanged — wrapper freed WITHOUT destructor?
+[2026-11-09 22:03:27.096] BEACON 192.168.50.186: P655-END rc=3 alive=false after 80 polls

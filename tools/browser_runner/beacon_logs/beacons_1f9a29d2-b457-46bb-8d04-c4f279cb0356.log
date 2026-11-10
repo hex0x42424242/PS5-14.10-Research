@@ -1,0 +1,4 @@
+[2026-11-09 22:00:01.162] BEACON 192.168.50.186: P654B-START ffload+delete
+[2026-11-09 22:00:01.206] BEACON 192.168.50.186: P654B-SETUP fonts.size=2|TRAP this===ffA:true
+[2026-11-09 22:00:01.436] BEACON 192.168.50.186: P654B-SPRAY n=64 setsize=0|LP settled=true resolved:true
+[2026-11-09 22:00:01.480] BEACON 192.168.50.186: P654B-VERDICT MISS even with delete(this) -> free needs fonts.load() trigger itself

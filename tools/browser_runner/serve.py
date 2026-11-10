@@ -35,7 +35,9 @@ ROOT = pathlib.Path(__file__).resolve().parent
 PROJECT = ROOT.parent.parent
 
 STATIC = {
-    '/': PROJECT / 'probes' / 'phase13_webkit' / 'p651-two-phase-address-leak.html',
+    '/': PROJECT / 'probes' / 'phase13_webkit' / 'p656k-forge-readback-rctl.html',
+    '/p656j2': PROJECT / 'probes' / 'phase13_webkit' / 'p656j2-landing-proof.html',
+    '/p656j4': PROJECT / 'probes' / 'phase13_webkit' / 'p656j4-landing-proof.html',
     '/probe/p172-jsc-corpus-runner.js': ROOT / 'p172-runner-standalone.html',
     '/p172-body.js': PROJECT / 'probes' / 'phase13_webkit' / 'p172-jsc-corpus-runner.js',
     '/p660': PROJECT / 'probes' / 'phase13_webkit' / 'p660-webkit-fingerprint-2026.html',
@@ -540,3 +542,6 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+
+
+
