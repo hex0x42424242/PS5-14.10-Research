@@ -1,0 +1,5 @@
+[2026-11-09 21:03:03.540] BEACON 192.168.50.186: ESCL-START
+[2026-11-09 21:03:03.551] BEACON 192.168.50.186: G-ERR TypeError: Attempted to assign to readonly property.
+[2026-11-09 21:03:03.592] BEACON 192.168.50.186: S-ERR TypeError: Attempted to assign to readonly property.
+[2026-11-09 21:03:03.603] BEACON 192.168.50.186: B-ERR TypeError: Attempted to assign to readonly property.
+[2026-11-09 21:03:03.640] BEACON 192.168.50.186: ESCL-DONE

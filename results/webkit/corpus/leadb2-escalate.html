@@ -1,0 +1,71 @@
+<!doctype html><meta charset="utf-8"><title>leadb2-escalate</title>
+<style>html,body{background:#060606;color:#fff;font-family:monospace;font-size:13px}</style>
+<div id="console"></div>
+<script>
+function b(m){ try { new Image().src = "/beacon?m=" + encodeURIComponent(String(m).slice(0,350)); } catch(e){} }
+var out = document.getElementById("console");
+function log(m){ var d=document.createElement("div"); d.textContent=m; out.appendChild(d); b(m); }
+function shape(a){ try { return JSON.stringify(a); } catch(e){ return "JSONERR"; } }
+
+log("ESCL-START");
+
+/* ==== G: getter suppression — spec exige Get(O, from) no shift; o getter DEVE disparar ==== */
+try {
+  var called = 0;
+  Object.defineProperty(Array.prototype, 2, { get: function(){ called++; return "got2"; }, configurable: true });
+  var g = [1,2,,4]; g.splice(0,2,9);
+  log("G1 getter-called=" + called + " want>=1 | [1]=" + g[1] + " | shape=" + shape(g));
+  var called2 = 0;
+  Object.defineProperty(Array.prototype, 3, { get: function(){ called2++; return "got3"; }, configurable: true });
+  var g2 = [1,2,3,,5]; g2.splice(0,2,9);
+  log("G2 getter3-called=" + called2 + " want>=1 | [2]=" + g2[2] + " | shape=" + shape(g2));
+  delete Array.prototype[2]; delete Array.prototype[3];
+  log("G3 cleanup done");
+} catch (e) { log("G-ERR " + e); }
+
+/* ==== S: matriz de parametros (sem prototipo: bug e independente) ==== */
+try {
+  function probe(holeAt, del, ins) {
+    var a = [1,2,3,4,5,6,7,8,9,10];
+    delete a[holeAt];
+    var args = [0, del];
+    for (var i = 0; i < ins; i++) args.push(99);
+    a.splice.apply(a, args);
+    log("S h" + holeAt + " d" + del + " i" + ins + " -> " + shape(a) + " len=" + a.length);
+  }
+  probe(1, 2, 1);  probe(2, 2, 1);  probe(3, 2, 1);  probe(5, 2, 1);
+  probe(2, 3, 1);  probe(3, 3, 1);  probe(2, 2, 0);  probe(3, 2, 2);
+  probe(3, 4, 1);  probe(3, 2, 3);  probe(8, 2, 1);  probe(3, 5, 1);
+} catch (e) { log("S-ERR " + e); }
+
+/* ==== B: escala, multiplos holes, corrupcao composta ==== */
+try {
+  var big = []; for (var i = 0; i < 20; i++) big.push(i);
+  delete big[10];
+  big.splice(0, 2, 777);
+  log("B1 big20 hole10 -> " + shape(big) + " len=" + big.length);
+
+  var multi = [1,2,3,4,5,6,7,8];
+  delete multi[2]; delete multi[5]; delete multi[7];
+  multi.splice(0, 2, 99);
+  log("B2 3holes -> " + shape(multi) + " len=" + multi.length);
+
+  var twice = [1,2,,4,5,6];
+  twice.splice(0, 2, 9);
+  log("B3 first -> " + shape(twice));
+  twice.splice(0, 2, 8);
+  log("B3 second -> " + shape(twice) + " (corrupcao composta?)");
+
+  var c = [1,2,,4,5];
+  c.splice(0, 2, 9);
+  log("B4 corrupted shape=" + shape(c) + " keys=" + Object.keys(c).join(","));
+  c.push(42);
+  log("B4 after push=" + shape(c) + " len=" + c.length);
+  c[5] = 7.5;
+  log("B4 after double=" + shape(c));
+  var sum = 0; for (var j = 0; j < c.length; j++) sum += (c[j] | 0);
+  log("B4 sum-iterate=" + sum + " (le o stale pelo fast path?)");
+} catch (e) { log("B-ERR " + e); }
+
+log("ESCL-DONE");
+</script>
