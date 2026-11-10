@@ -1,0 +1,27 @@
+<!--
+  p656j4: landing proof for p656j1 poison-nav oracle.
+
+  If this page beacons, the WebProcess SURVIVED the teardown of a forged
+  CSSFontFace whose W (+0x68, WeakPtrImpl) was 0x4141414141414141 ->
+  the teardown does NOT dereference W (WeakPtr liveness).
+
+  Beacon: P656J4-.
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656j4</title></head>
+<body>p656j4: landing proof
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656J4-' + encodeURIComponent(s), false); x.send(); } catch(e) {}
+}
+
+emit('LANDED', 'WebProcess survived poisoned-m_table teardown');
+emit('VERDICT', 'teardown does NOT deref W');
+})();
+</script>
+</body></html>

