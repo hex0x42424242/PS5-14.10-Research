@@ -1,0 +1,149 @@
+<!doctype html><meta charset="utf-8"><title>direct-tail-call-to-host-function-keeps-caller-code-alive.js</title>
+<script>
+(function () {
+  var m = /[?&]i=(\d+)/.exec(location.search);
+  if (!m) return;
+  var i = +m[1];
+  var s = null, n = 0;
+  try {
+    s = sessionStorage.getItem('v172s');
+    n = +(sessionStorage.getItem('v172n') || 0);
+  } catch (e) {}
+  if (!s) {
+    s = Math.random().toString(36).slice(2, 8);
+    try { sessionStorage.setItem('v172s', s); } catch (e) {}
+  }
+  window.__v172 = {
+    i: i,
+    mark: function (tag) {
+      n = n + 1;
+      try { sessionStorage.setItem('v172n', n); } catch (e) {}
+      var url = location.origin + '/beacon/V172-' + s + '-' + tag + '?t=' + Date.now() + '&n=' + n;
+      try { if (navigator.sendBeacon && navigator.sendBeacon(url)) return; } catch (e) {}
+      try { var x = new XMLHttpRequest(); x.open('GET', url, true); x.send(); } catch (e) {}
+    }
+  };
+  window.__v172.mark('BEFORE-' + i);
+})();
+</script>
+<script>
+var __ok = 0, __fail = 0, __failNames = [];
+function __is(a, b) { return (a === b) || (a !== a && b !== b); }
+function __eq(a, b) {
+  if (__is(a, b)) return true;
+  if (typeof a === 'bigint' && typeof b === 'bigint') return a === b;
+  try { return JSON.stringify(a) === JSON.stringify(b); } catch (e) { return false; }
+}
+function shouldBe(a, b, msg) { if (__eq(a, b)) { __ok++; } else { __fail++; if (__failNames.length < 5) __failNames.push(String(msg || '') + ' got=' + String(a) + ' want=' + String(b)); } }
+function shouldNotBe(a, b, msg) { if (!__eq(a, b)) { __ok++; } else { __fail++; } }
+function shouldBeTrue(a, msg) { shouldBe(a, true, msg); }
+function shouldBeFalse(a, msg) { shouldBe(a, false, msg); }
+function shouldBeUndefined(a, msg) { shouldBe(a, undefined, msg); }
+function shouldBeNull(a, msg) { shouldBe(a, null, msg); }
+function shouldBeEqualToString(a, b, msg) { shouldBe(a, b, msg); }
+function shouldBeGreaterThan(a, b) { if (a > b) { __ok++; } else { __fail++; } }
+function shouldBeGreaterThanOrEqual(a, b) { if (a >= b) { __ok++; } else { __fail++; } }
+function shouldBeLessThan(a, b) { if (a < b) { __ok++; } else { __fail++; } }
+function shouldBeLessThanOrEqual(a, b) { if (a <= b) { __ok++; } else { __fail++; } }
+function shouldThrow(fn) { try { fn(); __fail++; } catch (e) { __ok++; } }
+function shouldNotThrow(fn) { try { fn(); __ok++; } catch (e) { __fail++; } }
+function shouldThrowError(fn) { shouldThrow(fn); }
+function shouldNotThrowError(fn) { shouldNotThrow(fn); }
+function testPassed() { __ok++; }
+function testFailed(m) { __fail++; if (__failNames.length < 5) __failNames.push(String(m)); }
+function describe() {}
+function debug() {}
+function print() {}
+function noInline(f) { return f; }
+var noDFG = noInline, noFTL = noInline, noOSRExitFuzz = noInline, noTailCalls = noInline;
+var noEagerCompilation = noInline, noExceptions = noInline, noStructureCheck = noInline;
+function evaluate(s) { try { return (0, eval)(s); } catch (e) { return undefined; } }
+function markAndSweep() {}
+function gc() { if (window.GCController) GCController.collectAll(); }
+function drainMicrotasks() {}
+function createGlobalObject() { return {}; }
+function quit(status) { throw new Error('QUIT:' + status); }
+window.onerror = function () { return true; };
+var testLoopCount = 200;
+</script>
+<pre id="err"></pre><script>try{
+
+// A DFG/FTL DirectTailCall to a NoIntrinsic host function used to emit an
+// inline C call after prepareForTailCall destroyed the caller's frame. The
+// pushed return address pointed into the caller's own JIT code, which nothing
+// rooted: the conservative scan does not treat return addresses into CodeBlock
+// JIT code as roots, and the shuffled frame's codeBlock slot is nullptr. A GC
+// inside the host call that found one of the caller's weak references dead
+// would jettison and (with --sweepSynchronously) free the caller's machine
+// code, so the host function's return landed in freed JIT memory.
+//
+// The tail caller must have argCountIncludingThis <= the host callee's frame
+// (here both are 2), so that the shuffle fully overwrites the old frame header
+// and no stale codeBlock-slot word conservatively roots the caller.
+
+"use strict";
+
+globalThis.sideSink = 0;
+let sink = null;
+
+// Overwrite stale stack words that might conservatively root the helper.
+function scrub(d) {
+    let a = d + 0.5, b = d * 1.5, c = d - 0.25, e = d ^ 7;
+    return d > 0 ? scrub(d - 1) + a + b + c + e : a;
+}
+noInline(scrub);
+
+// Invalidate the global's inferred-value watchpoint so that nulling it later
+// does not jettison the caller via watchpoint instead of via GC.
+globalThis.h = function d1() {};
+globalThis.h = function d2() {};
+
+for (let gen = 0; gen < 50; gen++) {
+    // Fresh executables each generation so a jettisoned code block does not
+    // count against reoptimization heuristics of the next round.
+    const tail = new Function('n', `//g${gen}
+        "use strict";
+        if (n & 1) globalThis.sideSink = globalThis.h(n);
+        return "a".repeat(n);`);
+    noInline(tail);
+    globalThis.h = new Function('n', `//h${gen}
+        return n | 0;`);
+
+    for (let i = 0; i < 4000; i++)
+        sink = tail(2 + (i & 1));
+
+    globalThis.h = null; // Kill the frozen weak reference of tail's DFG code.
+    globalThis.scrub2 = scrub(2000);
+
+    // Even n skips the helper branch. Each call allocates megabytes inside
+    // stringProtoFuncRepeat, so a full GC lands inside the host call while
+    // the tail-shuffled frame no longer roots the caller's CodeBlock.
+    for (let k = 0; k < 16; k++)
+        sink = tail((1 << 20) + (k << 18));
+}
+
+if (sink.length !== (1 << 20) + (15 << 18))
+    throw new Error("bad result: " + sink.length);
+}catch(e){var d=document.getElementById('err'); if(d) d.textContent='THROW: '+e; if(window.__v172) __v172.mark('THREW-' + __v172.i + '-' + String(e).slice(0,90).replace(/[^A-Za-z0-9.:=<>%+_-]/g," "));}
+</script><p>ok <script>document.write(__ok)</script> fail <script>document.write(__fail)</script></p><script>if(window.__v172) __v172.mark('SUM-' + __v172.i + '-ok' + (typeof __ok!=="undefined"?__ok:-1) + '-fail' + (typeof __fail!=="undefined"?__fail:-1) + ((typeof __failNames!=="undefined"&&__failNames.length)?'-' + String(__failNames[0]).slice(0,110).replace(/[^A-Za-z0-9.:=<>%+_-]/g," "):''));</script><script>
+(function () {
+  var v = window.__v172;
+  if (!v) return;
+  v.mark('OK-' + v.i + '-jsc-057-direct-tail-call-to-host-function-keeps-caller-code-alive.html');
+  v.mark('GAP-' + v.i);
+  var m = /[?&]next=(\d+)/.exec(location.search);
+  var next = m ? +m[1] : 0;
+  var c = /[?&]c=(\d+)/.exec(location.search);
+  var sv = /[?&]v=([A-Za-z0-9]+)/.exec(location.search);
+  var g = /[?&]g=(\d+)/.exec(location.search);
+  var e = /[?&]e=(\d+)/.exec(location.search);
+  // The batch ends where the runner said it ends; without that the handoff
+  // would keep the chain alive for ever and `count` would bound nothing.
+  if (e && next >= +e[1]) { v.mark('BATCH-END-' + v.i); return; }
+  setTimeout(function () {
+    location.replace('/probe/p172-jsc-corpus-runner.js?start=' + next +
+                     '&count=' + (c ? c[1] : 40) + '&v=' + (sv ? sv[1] : '') +
+                     '&g=' + (g ? g[1] : 0));
+  }, 60);
+})();
+</script>
