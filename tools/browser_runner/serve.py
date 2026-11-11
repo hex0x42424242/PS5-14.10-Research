@@ -35,7 +35,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 PROJECT = ROOT.parent.parent
 
 STATIC = {
-    '/': PROJECT / 'probes' / 'phase13_webkit' / 'p661-splice-consumer-matrix.html',
+    '/': PROJECT / 'probes' / 'phase13_webkit' / 'p662-tailloss-matrix.html',
     '/p656j2': PROJECT / 'probes' / 'phase13_webkit' / 'p656j2-landing-proof.html',
     '/p656j4': PROJECT / 'probes' / 'phase13_webkit' / 'p656j4-landing-proof.html',
     '/probe/p172-jsc-corpus-runner.js': ROOT / 'p172-runner-standalone.html',
