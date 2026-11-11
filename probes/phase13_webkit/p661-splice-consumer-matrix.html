@@ -1,0 +1,234 @@
+<!--
+  p661: splice path-B consumer matrix — sequenced arms, crash oracle, twin-delta
+
+  Owner priority #1 (Issue #241) + cobrajet §4(a) serialization-first, §4(b)
+  pre-registered falsifier.
+
+  Victim law (our bisection, leadB): realm polluted with a DATA property at
+  Array.prototype[idx] BEFORE victim creation + holey victim + splice shape
+  itemCount < deleteCount => generic path B: stale deleted elements
+  materialize as own properties, tail elements lost (sig: [1,2,,4]
+  .splice(0,2,9) -> join "9,2,4" instead of "9,,3,4"). Mode is STICKY per
+  realm (B7).
+
+  Question: does any fast-path consumer (sort/reverse/concat/from/slice/
+  indexOf/filter/map/reduce/JSON/structuredClone/spread/entries/copyWithin/
+  fill/pop/shift) trust the corrupted butterfly without re-checking ->
+  OOB / type confusion / element-class mismatch under LLInt?
+
+  Design:
+    - ?arm=N sequence; auto-advance location.replace('/?arm=N+1')
+    - crash oracle: localStorage marks arm-start; boot with stale
+      {runningArm:N, completed:false} => previous arm N CRASHED; record +
+      skip. 2 retries max.
+    - twins: same victim+op built in a FRESH IFRAME realm (unpolluted) ->
+      delta(main, twin) is the anomaly signal, immune to pollution side
+      effects.
+    - controls: ctrl-falsifier (iframe realm polluted + DENSE victim =>
+      cobrajet predicts spec-correct; corruption falsifies the handoff law)
+      and ctrl-clean (iframe, clean holey => fast path, spec-correct).
+    - main realm polluted once at arm 2 (victim-verify); stickiness carries
+      all later arms (intended).
+    - detection per consumer: throw, join/length/keys delta vs twin,
+      typeof scan, numeric touch (v[i]+0.5), result summary.
+
+  Beacon: P661-. ~22 arms; sweep ≈ 1-2 min.
+  CRASH_CLASS: LOW (pure JS semantics; worst case WebProcess crash is the
+  signal itself and the sequencer logs it).
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p661</title></head>
+<body>p661: splice consumer matrix
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P661-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+
+/* ---------- sequencer ---------- */
+var KEY = 'p661_state';
+function stRead() { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch(e) { return {}; } }
+function stWrite(o) { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch(e) {} }
+
+var q = location.search || '';
+var arm = 0, m;
+if ((m = q.match(/[?&]arm=(\d+)/))) arm = parseInt(m[1], 10);
+if (/[?&]reset/.test(q)) { stWrite({}); emit('BOOT', 'state reset'); flush(); }
+
+var st = stRead();
+if (arm === 0 && !q) { st = {}; }
+
+/* crash recovery: booting into arm N with stale runningArm N and not
+   completed => the previous attempt of THIS arm died (Manual reopens last
+   URL after a WebProcess crash) */
+if (st.runningArm === arm && st.completed === false) {
+  st.retry = (st.retry || 0) + 1;
+  if (st.retry >= 2) {
+    emit('CRASH', 'arm=' + arm + ' marked (2 boots, no completion)');
+    flush();
+    st.log = (st.log || []); st.log.push({ arm: arm, crash: true });
+    stWrite({ runningArm: arm + 1, completed: true, retry: 0, log: st.log });
+    arm = arm + 1;
+  } else {
+    emit('RETRY', 'arm=' + arm + ' r' + st.retry);
+    flush();
+  }
+}
+
+/* ---------- arms table ---------- */
+var ARMS = [
+  { n: 'ctrl-falsifier', iframe: true, dense: true, pollute: true },
+  { n: 'ctrl-clean',     iframe: true },
+  { n: 'victim-verify' },
+  { n: 'sort' }, { n: 'reverse' }, { n: 'concat' }, { n: 'from' },
+  { n: 'slice' }, { n: 'indexOf' }, { n: 'includes' }, { n: 'filter' },
+  { n: 'map' }, { n: 'reduce' }, { n: 'json' }, { n: 'sclone' },
+  { n: 'spread' }, { n: 'entries' }, { n: 'lastIndexOf' },
+  { n: 'copyWithin' }, { n: 'fill' }, { n: 'pop' }, { n: 'shift' }
+];
+
+function goNext() {
+  var nxt = arm + 1;
+  stWrite({ runningArm: nxt, completed: true, retry: 0, log: stRead().log || [] });
+  if (nxt < ARMS.length) {
+    location.replace('/?arm=' + nxt);
+  } else {
+    var s = stRead();
+    var crashes = (s.log || []).filter(function(x){return x.crash;}).length;
+    emit('DONE', 'arms=' + ARMS.length + ' crashes=' + crashes);
+    flush();
+  }
+}
+
+/* ---------- victim + ops (run inside a given realm's window) ---------- */
+var VICTIM_SRC =
+  'function pollute(idx) { try { Array.prototype[idx] = 1; } catch(e) {} }' +
+  'function mkExact() { pollute(2); return [1,2,,4]; }' +
+  'function mkVictim(dense, W) {' +
+  '  if (!dense) { pollute(5); pollute(11); }' +
+  '  var v = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19];' +
+  '  if (!dense) { delete v[5]; delete v[11]; }' +
+  '  return v;' +
+  '}' +
+  'function doSplice(v) { return v.splice(0, 2, 90); }' +
+  'function consume(v, name, W) {' +
+  '  try {' +
+  '    switch(name){' +
+  '      case "sort": return v.slice().sort();' +
+  '      case "reverse": return v.slice().reverse();' +
+  '      case "concat": return v.concat([21,22]);' +
+  '      case "from": return Array.from(v);' +
+  '      case "slice": return v.slice(1, 15);' +
+  '      case "indexOf": return v.indexOf(4);' +
+  '      case "includes": return v.includes(4);' +
+  '      case "filter": return v.filter(function(x){return (x|0)%2===0;});' +
+  '      case "map": return v.map(function(x){return x;});' +
+  '      case "reduce": return v.reduce(function(a,b){return a;}, "r");' +
+  '      case "json": return JSON.stringify(v);' +
+  '      case "sclone": return (W.structuredClone ? W.structuredClone(v) : "N/A");' +
+  '      case "spread": return [].concat(v);' +
+  '      case "entries": return Object.keys(v).length;' +
+  '      case "lastIndexOf": return v.lastIndexOf(4);' +
+  '      case "copyWithin": return v.copyWithin(0, 2, 8);' +
+  '      case "fill": return v.fill(7, 3, 9);' +
+  '      case "pop": return v.pop();' +
+  '      case "shift": return v.shift();' +
+  '      default: return "no-op";' +
+  '    }' +
+  '  } catch(e) { return "THREW:" + String(e).slice(0, 60); }' +
+  '}' +
+  'function summarize(v) {' +
+  '  var t = [], k = 0;' +
+  '  for (var i = 0; i < v.length && i < 24; i++) { t.push(typeof v[i]); }' +
+  '  return "len=" + v.length + " join=" + v.join(",") + " nkeys=" + Object.keys(v).length + " types=" + t.join("");' +
+  '}' +
+  'function runArm(name, dense, pollute) {' +
+  '  var W = window;' +
+  '  var exact = mkExact(); var exactSig = ""; var exactBad = false;' +
+  '  try { doSplice(exact); exactSig = exact.join(","); exactBad = (exactSig === "9,2,4"); } catch(e) { exactSig = "THREW"; }' +
+  '  var v = mkVictim(dense, W);' +
+  '  var pre = summarize(v);' +
+  '  var ret = doSplice(v);' +
+  '  var postSplice = summarize(v);' +
+  '  var retSum = (ret && ret.join) ? ("arr:" + ret.join(",")) : String(ret);' +
+  '  var consumed = "skipped";' +
+  '  if (name !== "victim-verify" && name.indexOf("ctrl") !== 0) { var r = consume(v, name, W); consumed = (r && r.join) ? ("arr:" + r.join(",").slice(0,120) + "|len=" + r.length) : String(r).slice(0,120); }' +
+  '  var post = summarize(v);' +
+  '  var touch = "";' +
+  '  try { touch = (typeof v[1] === "number") ? (v[1] + 0.5).toFixed(1) : "nnum"; } catch(e) { touch = "T-ERR"; }' +
+  '  return { pre: pre, ret: retSum, postSplice: postSplice, consumed: consumed, post: post, touch: touch, exact: exactSig + (exactBad ? "|PATHB" : "|spec") };' +
+  '}' +
+  'self.__runArm = runArm;';
+
+/* install helpers in THIS realm */
+try { eval(VICTIM_SRC); } catch(e) { emit('INSTALL-ERR', String(e).slice(0,80)); flush(); }
+
+/* ---------- twin iframe (fresh realm per load) ---------- */
+function withTwin(armDef, cb) {
+  var f = document.createElement('iframe');
+  f.style.display = 'none';
+  document.body.appendChild(f);
+  var d = f.contentDocument;
+  d.open();
+  d.write('<!DOCTYPE html><html><head></head><body><script>' + VICTIM_SRC + '<\/script></body></html>');
+  d.close();
+  var out = null;
+  try { out = f.contentWindow.__runArm(armDef.n, !!armDef.dense, !!armDef.pollute); } catch(e) { out = { err: String(e).slice(0, 80) }; }
+  try { document.body.removeChild(f); } catch(e) {}
+  cb(out);
+}
+
+/* ---------- arm dispatch ---------- */
+var def = ARMS[arm];
+if (!def) { emit('BOOT', 'arm=' + arm + ' out of range'); flush(); return; }
+stWrite({ runningArm: arm, completed: false, retry: (st.retry || 0), log: stRead().log || [] });
+emit('BOOT', 'arm=' + arm + ' ' + def.n);
+flush();
+
+if (def.iframe) {
+  /* controls run entirely in the twin realm */
+  withTwin(def, function(t) {
+    emit('A' + arm + '-' + def.n,
+      'pre[' + (t && t.pre) + '] ret[' + (t && t.ret) + '] post[' + (t && t.post) + '] touch[' + (t && t.touch) + ']');
+    flush();
+    setTimeout(goNext, 500);
+  });
+} else {
+  if (arm === 2) {
+    /* pollute MAIN realm exactly once (sticky thereafter) — bisection shape */
+    try { Array.prototype[5] = 1; Array.prototype[11] = 1; } catch(e) {}
+    emit('POLLUTE', 'main realm sticky-on idx 5,11');
+  }
+  var main = null;
+  try { main = window.__runArm(def.n, !!def.dense, !!def.pollute); } catch(e) { main = { err: String(e).slice(0,80) }; }
+  /* synchronous emission BEFORE the twin — A2 must never be lost again */
+  emit('A' + arm + '-' + def.n, 'MAIN ' + (main && main.err ? ('ERR:' + main.err) : ('[' + (main ? main.exact : '?') + '] ' + (main ? main.pre : '?') + ' // ret[' + (main ? main.ret : '?') + '] // cons[' + (main ? main.consumed : '?') + '] // ' + (main ? main.post : '?'))));
+  flush();
+  withTwin({ n: def.n }, function(t) {
+    function s(r) { return r ? ((r.err ? ('ERR:' + r.err) : ('[' + r.exact + '] ' + r.pre + ' // ' + r.ret + ' // cons[' + r.consumed + '] // ' + r.post + ' // touch=' + r.touch))) : 'null'; }
+    emit('A' + arm + '-' + def.n, 'MAIN ' + s(main));
+    flush();
+    emit('T' + arm, 'TWIN ' + s(t));
+    flush();
+    /* delta focus: post-splice join mismatch is expected (path B); the
+       signal is the CONSUMER result / post-consume state diverging from
+       twin beyond the known stale-materialization shape */
+    setTimeout(goNext, 500);
+  });
+}
+
+})();
+</script>
+</body></html>
