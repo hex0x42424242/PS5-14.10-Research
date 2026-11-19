@@ -9,6 +9,7 @@ Seeded 2026-11-19 for the #295 cross-bench tri-class effort (cobrajet format: `P
 - **Mechanism [M, ours 2026-11-19]**: rc word @+0x00 is the RefCounted counter — engine `deref()` hitting 0 runs `delete this` (clean, measured: `FAM-FR`, no intrusive freelist write). Template rc=2 for one grade of safety margin.
 - **Firmware [M-x2]**: alive 14.10; **dead on 14.22** (no 192B reclaim — TFujiwara #67).
 - **Era [M]**: per-size-class allocator contest; 37h drought observed on our bench while class-768 stayed golden.
+- **Reclaim budget [S:strong, corrected 2026-11-19]**: the PR-66 "one success per WebProcess" constraint is probably **per-document** — cobrajet's witness table (#295 `#issuecomment-6978041882`) shows 5 hits inside one generation b35 across document self-reloads with the process provably alive (sessionStorage monotonicity). Re-measure before budgeting one pointer per boot in any chain design.
 
 ## Class 768 — CanvasRenderingContext2D (CVE-2026-43720) — the row cobrajet asked for
 
@@ -21,6 +22,7 @@ Seeded 2026-11-19 for the #295 cross-bench tri-class effort (cobrajet format: `P
 - **The ~464B State window [BKE — explains the V650/P682 crashes]**: device model State[8]@buffer+3712 ⇒ sizeof(State) ≈ 464B (8 saves; matches h4len=256-adjacent walk observations). A forged `m_stateStack.m_buffer` makes the engine read a **~464B State window at the target** — any target with less mapped/benign memory around it crashes. This explains: (a) V650 universal crashes (~1400 targets incl. valid bands — targets too small/misaligned for the window), (b) P682 crash at the leaked WeakHashSet impl (~64B object — far smaller than 464B), (c) why `lineWidth` is always the crash point (deepest field read in the window).
 - **Correct forge shape [BKE]**: `m_buffer` → attacker-templated region ≥464B with valid Vector-tail fields (`m_capacity`/`m_size` at the header offsets inside the 768B chunk) and sentinel doubles at `State[k].lineWidth/transform` — controlled-content read first, outward steps after. Offset of `m_stateStack` inside the 768B object: **device-measure only** (queued Tuesday: oracle sweep around the alias context; save() N times differential).
 - **Firmware [M-x2]**: alive 14.10 **and 14.22** (alias R/W confirmed) — the survives-updates primitive. Needs a pointer source on 14.2x (FontFace leak is patched there; V674 APNG claim unadjudicated).
+- **Cross-bench [M-x2]**: cobrajet stale-wrapper write channel 6/6 era-independent (inside 37h FontFace drought — their PR-66 comment + their fork issue #26); class-768 verdicts (`P693-C768-HIT-i<idx>`, LE-hex) flowing per-load, idx drift 6↔12 over ~30 loads.
 
 ## Class 80 — (context header?) [?]
 
